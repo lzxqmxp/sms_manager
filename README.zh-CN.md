@@ -149,6 +149,16 @@ sms_manager/
 
 详细 API 文档: [SMS-Activate API Docs](https://sms-activate.org/en/api2)
 
+## 界面预览
+
+应用包含以下主要界面：
+
+1. **API 配置界面**: 输入和保存 API Key
+2. **号码请求区**: 选择服务商和国家，请求号码
+3. **号码列表区**: 显示所有活跃号码和接收到的短信
+4. **倒计时显示**: 实时显示距离自动释放的剩余时间
+5. **余额显示**: 顶部显示账户余额
+
 ## 注意事项
 
 ⚠️ **重要提示**：
@@ -180,6 +190,38 @@ A: 数据存储在本地 SQLite 数据库中，位于系统用户数据目录。
 **Q: 支持哪些服务商？**  
 A: 目前支持 Tinder、Telegram、WhatsApp、Google、Facebook 等主流服务。
 
+**Q: 可以同时请求多个号码吗？**  
+A: 可以，应用支持同时管理多个活跃号码。
+
+**Q: 短信内容会保存吗？**  
+A: 是的，所有接收到的短信都会保存在本地数据库中。
+
+## 开发说明
+
+### 调试模式
+
+```bash
+npm run dev
+```
+
+开发模式会自动打开 DevTools，方便调试。
+
+### 构建生产版本
+
+```bash
+npm run build
+```
+
+构建完成后，可执行文件会生成在 `release` 目录中。
+
+### 代码注释
+
+所有代码均包含详细的中文注释，便于理解和维护。
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
 ## 许可证
 
 MIT License
@@ -193,3 +235,5 @@ SMS Manager 功能实现：2024
 
 - [electron-vite-vue](https://github.com/electron-vite/electron-vite-vue) - 优秀的 Electron + Vue + Vite 模板
 - [SMS-Activate](https://sms-activate.org/) - 提供短信接码服务
+- [Vue 3](https://vuejs.org/) - 渐进式 JavaScript 框架
+- [Electron](https://www.electronjs.org/) - 跨平台桌面应用框架

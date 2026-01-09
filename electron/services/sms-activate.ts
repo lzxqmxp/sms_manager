@@ -215,7 +215,7 @@ export interface SmsStatus {
  * 服务代码映射
  */
 export const SERVICE_CODES: Record<string, string> = {
-  'tinder': 'tg', // Tinder 对应的服务代码
+  'tinder': 'ot', // Tinder 对应的服务代码
   'telegram': 'tg',
   'whatsapp': 'wa',
   'google': 'go',

@@ -15,7 +15,7 @@ import {
   getApiConfig,
   PhoneNumberRecord
 } from '../database/index.js'
-import { SmsActivateService, COUNTRY_CODES } from '../services/sms-activate.js'
+import { SmsActivateService, COUNTRY_CODES, SERVICE_CODES } from '../services/sms-activate.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -321,8 +321,11 @@ ipcMain.handle('request-number', async (_, service: string, country: string) => 
     // 获取国家代码
     const countryCode = COUNTRY_CODES[country] || '12'
     
+    // 获取服务代码
+    const serviceCode = SERVICE_CODES[service] || service
+    
     // 请求号码
-    const result = await smsService.getNumber(service, countryCode)
+    const result = await smsService.getNumber(serviceCode, countryCode)
     
     // 保存到数据库
     const now = Date.now()
