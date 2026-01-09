@@ -1,4 +1,4 @@
-<!-- SMS Manager 主界面组件 -->
+<!-- SMS Manager 主界面组件（修复标签不对应与结构重复问题） -->
 <template>
   <div class="sms-manager">
     <!-- 顶部导航栏 -->
@@ -7,126 +7,102 @@
       <div class="header-right">
         <div class="balance" v-if="balance !== null">
           <span class="balance-label">账户余额:</span>
-          <span class="balance-value">${{ balance.toFixed(2) }}</span>
-          <button @click="refreshBalance" class="btn-refresh" :disabled="loading">
-            🔄 刷新
-          </button>
+          <span class="balance-value">${{ balance !== null ? balance.toFixed(2) : '0.00' }}</span>
+          <button @click="refreshBalance" class="btn-refresh" :disabled="loading">🔄 刷新</button>
+        </div>
+        <div class="log-toggle">
+          <label class="switch">
+            <input type="checkbox" v-model="logEnabled" @change="applyLogEnabled" />
+            <span class="slider"></span>
+          </label>
+          <span class="log-label">API 日志</span>
         </div>
       </div>
     </div>
 
-    <!-- API Key 配置区域 -->
+    <!-- API Key 配置区域（未配置时显示） -->
     <div class="config-section" v-if="!hasApiKey">
       <div class="config-card">
         <h2>⚙️ API 配置</h2>
         <p class="help-text">请输入您的 SMS-Activate API Key 以开始使用</p>
         <div class="input-group">
-          <input 
-            v-model="apiKeyInput" 
-            type="text" 
-            placeholder="请输入 API Key"
-            class="input-field"
-            @keyup.enter="saveApiKey"
-          />
-          <button @click="saveApiKey" class="btn-primary" :disabled="!apiKeyInput || loading">
-            保存并连接
-          </button>
+          <input v-model="apiKeyInput" class="input-field" type="password" placeholder="输入 API Key" />
+          <button class="btn-primary" @click="saveApiKey" :disabled="loading">保存</button>
         </div>
       </div>
     </div>
 
-    <!-- 主功能区域 -->
+    <!-- 主功能区域（已配置时显示） -->
     <div class="main-content" v-else>
-      <!-- 请求号码区域 -->
+      <!-- 左侧：请求号码 -->
       <div class="request-section">
         <div class="section-card">
           <h2>🎯 请求号码</h2>
           <div class="form-group">
-            <label>服务商:</label>
+            <label>服务:</label>
             <select v-model="selectedService" class="select-field">
-              <option value="tinder">Tinder</option>
-              <option value="telegram">Telegram</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="google">Google</option>
-              <option value="facebook">Facebook</option>
+              <option v-for="s in services" :key="s.code" :value="s.code">{{ s.name || s.code }}</option>
             </select>
           </div>
           <div class="form-group">
             <label>国家:</label>
-            <select v-model="selectedCountry" class="select-field">
-              <option value="USA">美国 (USA)</option>
-              <option value="Russia">俄罗斯</option>
-              <option value="Ukraine">乌克兰</option>
-              <option value="Philippines">菲律宾</option>
-              <option value="Indonesia">印度尼西亚</option>
+            <select v-model="selectedCountry" class="select-field" @change="onCountryChange">
+              <option v-for="c in countries" :key="c.code" :value="c.code">{{ c.name }}</option>
             </select>
           </div>
-          <button 
-            @click="requestNumber" 
-            class="btn-primary btn-large"
-            :disabled="loading || requestingNumber"
-          >
+          <div class="form-group">
+            <label>运营商（可多选，优先从左到右）:</label>
+            <div class="operator-list">
+              <label v-for="op in operators" :key="op" class="op-item">
+                <input type="checkbox" :value="op" v-model="selectedOperators" />
+                <span>{{ formatOperator(op) }}</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group inline">
+            <div>
+              <label>最高价格（可选）:</label>
+              <input type="number" min="0" step="0.01" v-model.number="maxPrice" class="input-field" placeholder="例如 2" />
+            </div>
+            <div>
+              <label>Ref（可选）:</label>
+              <input type="text" v-model="refCode" class="input-field" placeholder="推荐码/来源标识" />
+            </div>
+          </div>
+          <button @click="requestNumber" class="btn-primary btn-large" :disabled="loading || requestingNumber">
             {{ requestingNumber ? '⏳ 请求中...' : '🚀 请求号码' }}
           </button>
         </div>
       </div>
 
-      <!-- 活跃号码列表 -->
+      <!-- 右侧：活跃号码列表 -->
       <div class="numbers-section">
         <h2>📋 活跃号码列表</h2>
-        
         <div v-if="activeNumbers.length === 0" class="empty-state">
           <p>暂无活跃号码</p>
-          <p class="empty-hint">点击上方"请求号码"按钮获取新号码</p>
+          <p class="empty-hint">点击左侧“请求号码”按钮获取新号码</p>
         </div>
-
         <div v-else class="numbers-list">
-          <div 
-            v-for="number in activeNumbers" 
-            :key="number.activation_id"
-            class="number-card"
-            :class="{ 'has-sms': hasSms(number.activation_id) }"
-          >
+          <div v-for="number in activeNumbers" :key="number.activation_id" class="number-card" :class="{ 'has-sms': hasSms(number.activation_id) }">
             <div class="number-header">
               <div class="number-info">
                 <span class="phone-number">📞 {{ formatPhoneNumber(number.phone_number) }}</span>
                 <span class="service-badge">{{ getServiceName(number.service) }}</span>
                 <span class="country-badge">{{ number.country }}</span>
+                <span class="operator-badge" v-if="number.operator">{{ formatOperator(number.operator || '') }}</span>
               </div>
               <div class="number-actions">
-                <button 
-                  @click="requestResendSms(number.activation_id)" 
-                  class="btn-secondary btn-small"
-                  :disabled="loading"
-                  title="请求重新发送短信"
-                >
-                  📨 重发
-                </button>
-                <button 
-                  @click="releaseNumber(number.activation_id)" 
-                  class="btn-danger btn-small"
-                  :disabled="loading"
-                  title="手动释放号码"
-                >
-                  ❌ 释放
-                </button>
+                <button @click="requestResendSms(number.activation_id)" class="btn-secondary btn-small" :disabled="loading" title="请求重新发送短信">📨 重发</button>
+                <button @click="releaseNumber(number.activation_id)" class="btn-danger btn-small" :disabled="loading" title="手动释放号码">❌ 释放</button>
               </div>
             </div>
-
-            <!-- 倒计时 -->
             <div class="countdown">
               <span class="countdown-label">⏱️ 自动释放倒计时:</span>
               <span class="countdown-value">{{ getCountdown(number.expires_at) }}</span>
             </div>
-
-            <!-- 短信内容 -->
             <div class="sms-content" v-if="getSmsForNumber(number.activation_id).length > 0">
               <h4 class="sms-header">💬 收到的短信:</h4>
-              <div 
-                v-for="(sms, index) in getSmsForNumber(number.activation_id)" 
-                :key="sms.id"
-                class="sms-message"
-              >
+              <div v-for="(sms, index) in getSmsForNumber(number.activation_id)" :key="sms.id" class="sms-message">
                 <div class="sms-index">第 {{ index + 1 }} 条</div>
                 <div class="sms-text">{{ sms.message }}</div>
                 <div class="sms-time">{{ formatTime(sms.received_at) }}</div>
@@ -136,18 +112,11 @@
               <span class="waiting-icon">⏳</span>
               <span class="waiting-text">等待接收短信...</span>
             </div>
-
-            <!-- 号码详情 -->
             <div class="number-details">
-              <span class="detail-item">
-                <strong>激活ID:</strong> {{ number.activation_id }}
-              </span>
-              <span class="detail-item">
-                <strong>状态:</strong> {{ getStatusText(number.status) }}
-              </span>
-              <span class="detail-item">
-                <strong>创建时间:</strong> {{ formatTime(number.created_at) }}
-              </span>
+              <span class="detail-item"><strong>激活ID:</strong> {{ number.activation_id }}</span>
+              <span class="detail-item"><strong>状态:</strong> {{ getStatusText(number.status) }}</span>
+              <span class="detail-item"><strong>创建时间:</strong> {{ formatTime(number.created_at) }}</span>
+              <span class="detail-item" v-if="number.operator"><strong>运营商:</strong> {{ formatOperator(number.operator || '') }}</span>
             </div>
           </div>
         </div>
@@ -164,85 +133,147 @@
       {{ notification.message }}
     </div>
   </div>
+  
 </template>
 
 <script setup lang="ts">
+// 仅在渲染进程中使用的 Vue 组合式 API
 import { ref, onMounted, onUnmounted } from 'vue'
 
-// 类型定义
-interface PhoneNumber {
-  id?: number
+// ---------------- 类型声明 ----------------
+// 短信消息
+interface SmsMessage {
+  id: string | number
+  message: string
+  received_at: number
+}
+
+// 活跃号码
+interface ActiveNumber {
   activation_id: string
   phone_number: string
   service: string
   country: string
   operator?: string
   status: string
-  cost?: number
   created_at: number
   expires_at: number
-  released_at?: number
 }
 
-interface SmsMessage {
-  id?: number
-  activation_id: string
-  phone_number: string
-  message: string
-  received_at: number
-}
-
-interface Notification {
-  message: string
-  type: 'success' | 'error' | 'info'
-}
-
-// 响应式状态
-const apiKeyInput = ref('')
-const hasApiKey = ref(false)
-const balance = ref<number | null>(null)
-const selectedService = ref('tinder')
-const selectedCountry = ref('USA')
-const activeNumbers = ref<PhoneNumber[]>([])
-const smsMessages = ref<Map<string, SmsMessage[]>>(new Map())
+// ---------------- 响应式状态 ----------------
 const loading = ref(false)
 const requestingNumber = ref(false)
-const notification = ref<Notification | null>(null)
+const balance = ref<number | null>(null)
+const logEnabled = ref(false)
 
-// 定时器
-let countdownInterval: NodeJS.Timeout | null = null
-let notificationTimeout: NodeJS.Timeout | null = null
+const hasApiKey = ref(false)
+const apiKeyInput = ref('')
 
-/**
- * 显示通知
- */
+const services = ref<Array<{ code: string; name: string }>>([])
+const countries = ref<Array<{ code: string; name: string }>>([])
+const operators = ref<string[]>([])
+
+const selectedService = ref('')
+const selectedCountry = ref('')
+const selectedOperators = ref<string[]>([])
+const maxPrice = ref<number | null>(null)
+const refCode = ref('')
+
+const activeNumbers = ref<ActiveNumber[]>([])
+const smsMessages = ref<Map<string, SmsMessage[]>>(new Map())
+
+const notification = ref<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+let notificationTimeout: ReturnType<typeof setTimeout> | null = null
+let countdownInterval: ReturnType<typeof setInterval> | null = null
+
+// ---------------- 工具函数 ----------------
 function showNotification(message: string, type: 'success' | 'error' | 'info' = 'info') {
   notification.value = { message, type }
-  
-  if (notificationTimeout) {
-    clearTimeout(notificationTimeout)
-  }
-  
+  if (notificationTimeout) clearTimeout(notificationTimeout)
   notificationTimeout = setTimeout(() => {
     notification.value = null
-  }, 3000)
+  }, 2500)
 }
 
-/**
- * 保存 API Key
- */
+function getSmsForNumber(activationId: string): SmsMessage[] {
+  return smsMessages.value.get(activationId) || []
+}
+
+function hasSms(activationId: string): boolean {
+  return getSmsForNumber(activationId).length > 0
+}
+
+function formatPhoneNumber(phone: string): string {
+  return '+' + phone
+}
+
+function getServiceName(service: string): string {
+  const names: Record<string, string> = {
+    tinder: 'Tinder',
+    telegram: 'Telegram',
+    whatsapp: 'WhatsApp',
+    google: 'Google',
+    facebook: 'Facebook',
+  }
+  return names[service] || service
+}
+
+function formatOperator(op: string): string {
+  const map: Record<string, string> = {
+    tmobile: 'T-Mobile',
+    att: 'AT&T',
+    at_t: 'AT&T',
+    verizon: 'Verizon',
+    sprint: 'Sprint',
+    any: '任意',
+  }
+  return map[op] || op
+}
+
+function getStatusText(status: string): string {
+  const texts: Record<string, string> = {
+    active: '🟢 活跃',
+    waiting: '⏳ 等待',
+    completed: '✅ 完成',
+    released: '🔴 已释放',
+    cancelled: '❌ 已取消',
+  }
+  return texts[status] || status
+}
+
+function getCountdown(expiresAt: number): string {
+  const now = Date.now()
+  const releaseTime = expiresAt - 2 * 60 * 1000 // 提前2分钟释放
+  const diff = releaseTime - now
+  if (diff <= 0) return '即将释放...'
+  const minutes = Math.floor(diff / 60000)
+  const seconds = Math.floor((diff % 60000) / 1000)
+  return `${minutes}分${seconds}秒`
+}
+
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+// ---------------- IPC 调用 ----------------
 async function saveApiKey() {
-  if (!apiKeyInput.value) return
-  
   loading.value = true
   try {
     const result = await window.ipcRenderer.invoke('save-api-key', apiKeyInput.value)
     if (result.success) {
       hasApiKey.value = true
-      showNotification('API Key 保存成功！', 'success')
+      showNotification('API Key 已保存', 'success')
       await refreshBalance()
+      await loadActiveNumbers()
     } else {
-      showNotification('保存失败: ' + result.error, 'error')
+      showNotification('保存失败: ' + (result.error || ''), 'error')
     }
   } catch (error) {
     showNotification('保存失败: ' + String(error), 'error')
@@ -251,9 +282,6 @@ async function saveApiKey() {
   }
 }
 
-/**
- * 刷新余额
- */
 async function refreshBalance() {
   loading.value = true
   try {
@@ -270,19 +298,29 @@ async function refreshBalance() {
   }
 }
 
-/**
- * 请求号码
- */
+async function applyLogEnabled() {
+  try {
+    await window.ipcRenderer.invoke('set-log-enabled', logEnabled.value)
+    showNotification(`API 日志已${logEnabled.value ? '开启' : '关闭'}`, 'info')
+  } catch (error) {
+    showNotification('设置日志开关失败: ' + String(error), 'error')
+  }
+}
+
 async function requestNumber() {
   requestingNumber.value = true
   loading.value = true
   try {
     const result = await window.ipcRenderer.invoke(
-      'request-number', 
-      selectedService.value, 
-      selectedCountry.value
+      'request-number',
+      selectedService.value,
+      selectedCountry.value,
+      {
+        operators: selectedOperators.value,
+        maxPrice: maxPrice.value ?? undefined,
+        ref: refCode.value || undefined,
+      },
     )
-    
     if (result.success) {
       showNotification('号码获取成功！', 'success')
       await loadActiveNumbers()
@@ -298,12 +336,21 @@ async function requestNumber() {
   }
 }
 
-/**
- * 释放号码
- */
+async function onCountryChange() {
+  try {
+    const res = await window.ipcRenderer.invoke('list-operators', selectedCountry.value)
+    if (res?.success) {
+      operators.value = Array.isArray(res.data) ? res.data : []
+      selectedOperators.value = []
+    }
+  } catch (e) {
+    operators.value = []
+    selectedOperators.value = []
+  }
+}
+
 async function releaseNumber(activationId: string) {
   if (!confirm('确定要手动释放这个号码吗？')) return
-  
   loading.value = true
   try {
     const result = await window.ipcRenderer.invoke('release-number', activationId)
@@ -321,16 +368,11 @@ async function releaseNumber(activationId: string) {
   }
 }
 
-/**
- * 加载活跃号码
- */
 async function loadActiveNumbers() {
   try {
     const result = await window.ipcRenderer.invoke('get-active-numbers')
     if (result.success) {
-      activeNumbers.value = result.data
-      
-      // 加载每个号码的短信
+      activeNumbers.value = result.data as ActiveNumber[]
       for (const number of activeNumbers.value) {
         await loadSmsMessages(number.activation_id)
       }
@@ -340,23 +382,17 @@ async function loadActiveNumbers() {
   }
 }
 
-/**
- * 加载短信记录
- */
 async function loadSmsMessages(activationId: string) {
   try {
     const result = await window.ipcRenderer.invoke('get-sms-messages', activationId)
     if (result.success) {
-      smsMessages.value.set(activationId, result.data)
+      smsMessages.value.set(activationId, result.data as SmsMessage[])
     }
   } catch (error) {
     console.error('加载短信记录失败:', error)
   }
 }
 
-/**
- * 请求重发短信
- */
 async function requestResendSms(activationId: string) {
   loading.value = true
   try {
@@ -373,147 +409,84 @@ async function requestResendSms(activationId: string) {
   }
 }
 
-/**
- * 获取指定号码的短信
- */
-function getSmsForNumber(activationId: string): SmsMessage[] {
-  return smsMessages.value.get(activationId) || []
-}
-
-/**
- * 检查是否收到短信
- */
-function hasSms(activationId: string): boolean {
-  return getSmsForNumber(activationId).length > 0
-}
-
-/**
- * 格式化手机号
- */
-function formatPhoneNumber(phone: string): string {
-  return '+' + phone
-}
-
-/**
- * 获取服务名称
- */
-function getServiceName(service: string): string {
-  const names: Record<string, string> = {
-    tinder: 'Tinder',
-    telegram: 'Telegram',
-    whatsapp: 'WhatsApp',
-    google: 'Google',
-    facebook: 'Facebook'
-  }
-  return names[service] || service
-}
-
-/**
- * 获取状态文本
- */
-function getStatusText(status: string): string {
-  const texts: Record<string, string> = {
-    active: '🟢 活跃',
-    waiting: '⏳ 等待',
-    completed: '✅ 完成',
-    released: '🔴 已释放',
-    cancelled: '❌ 已取消'
-  }
-  return texts[status] || status
-}
-
-/**
- * 获取倒计时
- */
-function getCountdown(expiresAt: number): string {
-  const now = Date.now()
-  const releaseTime = expiresAt - 2 * 60 * 1000 // 提前2分钟释放
-  const diff = releaseTime - now
-  
-  if (diff <= 0) {
-    return '即将释放...'
-  }
-  
-  const minutes = Math.floor(diff / 60000)
-  const seconds = Math.floor((diff % 60000) / 1000)
-  
-  return `${minutes}分${seconds}秒`
-}
-
-/**
- * 格式化时间
- */
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  const seconds = String(date.getSeconds()).padStart(2, '0')
-  
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
-}
-
-/**
- * 监听短信接收事件
- */
 function setupSmsListener() {
-  window.ipcRenderer.on('sms-received', (_, data) => {
+  window.ipcRenderer.on('sms-received', (_, data: { activationId: string; message: string }) => {
     showNotification(`收到新短信: ${data.message}`, 'success')
     loadSmsMessages(data.activationId)
   })
-  
-  window.ipcRenderer.on('number-released', (_, data) => {
+  window.ipcRenderer.on('number-released', () => {
     showNotification('号码已自动释放', 'info')
     loadActiveNumbers()
     refreshBalance()
   })
 }
 
-/**
- * 初始化
- */
+// ---------------- 生命周期 ----------------
 onMounted(async () => {
-  // 检查是否已配置 API Key
-  const result = await window.ipcRenderer.invoke('get-api-key')
-  if (result.success && result.apiKey) {
-    hasApiKey.value = true
-    apiKeyInput.value = result.apiKey
-    await refreshBalance()
-    await loadActiveNumbers()
-  }
-  
-  // 设置监听器
+  // 读取 API Key
+  try {
+    const result = await window.ipcRenderer.invoke('get-api-key')
+    if (result.success && result.apiKey) {
+      hasApiKey.value = true
+      apiKeyInput.value = result.apiKey
+      await refreshBalance()
+      await loadActiveNumbers()
+    }
+  } catch {}
+
+  // 日志配置
+  try {
+    const cfg = await window.ipcRenderer.invoke('get-log-config')
+    if (cfg?.success) logEnabled.value = !!cfg.enabled
+  } catch {}
+
+  // 加载服务与国家
+  try {
+    const [sv, ct] = await Promise.all([
+      window.ipcRenderer.invoke('list-services'),
+      window.ipcRenderer.invoke('list-countries'),
+    ])
+    if (sv?.success) {
+      const raw = sv.data
+      const arr: Array<{ code: string; name: string }> = []
+      if (raw && typeof raw === 'object') {
+        for (const k in raw) {
+          const item = raw[k]
+          arr.push({ code: k, name: item?.name || k })
+        }
+      }
+      services.value = arr
+      if (!selectedService.value && arr.length) selectedService.value = arr[0].code
+    }
+    if (ct?.success) {
+      const raw = ct.data
+      const arr: Array<{ code: string; name: string }> = []
+      if (raw && typeof raw === 'object') {
+        for (const k in raw) {
+          const name = typeof raw[k] === 'string' ? raw[k] : (raw[k]?.name || k)
+          arr.push({ code: k, name })
+        }
+      }
+      countries.value = arr
+      if (!selectedCountry.value && arr.length) {
+        selectedCountry.value = arr[0].code
+        await onCountryChange()
+      }
+    }
+  } catch {}
+
+  // 设置事件监听
   setupSmsListener()
-  
-  // 启动倒计时定时器
+
+  // 倒计时刷新
   countdownInterval = setInterval(() => {
-    // 强制更新倒计时显示
     activeNumbers.value = [...activeNumbers.value]
   }, 1000)
-  
-  // 每30秒自动刷新活跃号码列表
-  const refreshInterval = setInterval(() => {
-    loadActiveNumbers()
-  }, 30000)
-  
-  // 保存定时器引用以便清理
-  onUnmounted(() => {
-    clearInterval(refreshInterval)
-  })
 })
 
-/**
- * 清理
- */
 onUnmounted(() => {
-  if (countdownInterval) {
-    clearInterval(countdownInterval)
-  }
-  if (notificationTimeout) {
-    clearTimeout(notificationTimeout)
-  }
+  if (countdownInterval) clearInterval(countdownInterval)
+  if (notificationTimeout) clearTimeout(notificationTimeout)
 })
 </script>
 
@@ -549,6 +522,54 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 15px;
+}
+
+.log-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-label {
+  color: #000000;
+  font-weight: 600;
+}
+
+/* 简易开关样式 */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input { display: none; }
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.4);
+  transition: .2s;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px; width: 18px;
+  left: 3px; bottom: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+}
+
+.switch input:checked + .slider {
+  background-color: #4CAF50;
+}
+
+.switch input:checked + .slider:before {
+  transform: translateX(20px);
 }
 
 .balance {
@@ -639,6 +660,27 @@ onUnmounted(() => {
   margin-bottom: 5px;
   color: #555;
   font-weight: 600;
+}
+
+.form-group.inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.operator-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.op-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f7f7f7;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
 }
 
 /* 输入框和选择框 */
@@ -816,6 +858,15 @@ button:disabled {
 .country-badge {
   background: #f0f0f0;
   color: #666;
+}
+
+.operator-badge {
+  background: #e0f7fa;
+  color: #00796b;
+  padding: 4px 12px;
+  border-radius: 15px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .number-actions {

@@ -13,9 +13,13 @@ import {
   getSmsMessages,
   saveApiConfig,
   getApiConfig,
+  setLogEnabled,
+  getLogEnabled,
+  getApiLogs,
+  listApiActions,
   PhoneNumberRecord
 } from '../database/index.js'
-import { SmsActivateService, COUNTRY_CODES, SERVICE_CODES } from '../services/sms-activate.js'
+import { SmsActivateService, COUNTRY_CODES, SERVICE_CODES, OPERATOR_CODES } from '../services/sms-activate.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -108,9 +112,19 @@ const releaseTimers: Map<string, NodeJS.Timeout> = new Map()
  * 开始轮询短信
  */
 function startSmsPolling(activationId: string, phoneNumber: string) {
+  // 若已存在轮询，则不重复创建
+  if (pollingTimers.has(activationId)) return
   // 每 5 秒检查一次短信
   const timer = setInterval(async () => {
-    if (!smsService) return
+    // 确保服务已初始化
+    if (!smsService) {
+      const cfg = getApiConfig()
+      if (cfg?.api_key) {
+        smsService = new SmsActivateService(cfg.api_key)
+      } else {
+        return
+      }
+    }
     
     try {
       const status = await smsService.getStatus(activationId)
@@ -157,34 +171,71 @@ function startSmsPolling(activationId: string, phoneNumber: string) {
  * 设置自动释放定时器
  */
 function setAutoReleaseTimer(activationId: string, expiresAt: number) {
+  // 若已存在释放定时器，则不重复创建
+  if (releaseTimers.has(activationId)) return
   // 在到期前 2 分钟释放号码
   const releaseTime = expiresAt - 2 * 60 * 1000
   const delay = releaseTime - Date.now()
   
   if (delay > 0) {
     const timer = setTimeout(async () => {
-      if (!smsService) return
+      // 确保服务已初始化
+      if (!smsService) {
+        const cfg = getApiConfig()
+        if (cfg?.api_key) {
+          smsService = new SmsActivateService(cfg.api_key)
+        } else {
+          return
+        }
+      }
       
       try {
-        // 检查是否已收到短信
+        // 检查是否已收到短信（本地 + 远端）
         const messages = getSmsMessages(activationId)
-        if (messages.length === 0) {
-          // 未收到短信，取消激活
-          await smsService.cancelActivation(activationId)
-          updatePhoneNumberStatus(activationId, 'released', Date.now())
-          
-          // 通知渲染进程
-          win?.webContents.send('number-released', {
-            activationId,
-            reason: 'auto-release'
-          })
-          
-          // 停止轮询
-          const pollingTimer = pollingTimers.get(activationId)
-          if (pollingTimer) {
-            clearInterval(pollingTimer)
-            pollingTimers.delete(activationId)
+        let remoteReceived = false
+        try {
+          const st = await smsService.getStatus(activationId)
+          remoteReceived = st.status === 'received'
+        } catch (e) {
+          // 远端状态获取失败时，不据此放行释放，以本地记录为准
+        }
+        if (messages.length === 0 && !remoteReceived) {
+          // 本地无短信且远端未标记为已收，尝试取消激活
+          const resp = await smsService.cancelActivation(activationId)
+          const ok = typeof resp === 'string' && /^ACCESS_/i.test(resp)
+          let confirmed = false
+          // 短暂重试确认取消状态（最多 3 次，每次 1 秒）
+          for (let i = 0; i < 3; i++) {
+            try {
+              const verify = await smsService.getStatus(activationId)
+              if (verify.status === 'cancelled') {
+                confirmed = true
+                break
+              }
+            } catch {}
+            await new Promise(r => setTimeout(r, 1000))
           }
+          if (ok || confirmed) {
+            updatePhoneNumberStatus(activationId, 'released', Date.now())
+            
+            // 通知渲染进程
+            win?.webContents.send('number-released', {
+              activationId,
+              reason: 'auto-release'
+            })
+            
+            // 停止轮询
+            const pollingTimer = pollingTimers.get(activationId)
+            if (pollingTimer) {
+              clearInterval(pollingTimer)
+              pollingTimers.delete(activationId)
+            }
+          } else {
+            console.warn('自动释放失败：远端未确认取消且返回非 ACCESS_* 响应', resp)
+          }
+        } else {
+          // 已收到短信（本地或远端显示已收），不进行自动释放
+          // 若远端已收但本地尚未保存，后续轮询会入库并完成
         }
       } catch (error) {
         console.error('自动释放错误:', error)
@@ -197,10 +248,27 @@ function setAutoReleaseTimer(activationId: string, expiresAt: number) {
   }
 }
 
+/**
+ * 恢复数据库中已存在的活跃会话，重新启动轮询与自动释放
+ */
+function restoreActiveSessions() {
+  try {
+    const numbers = getActivePhoneNumbers()
+    for (const n of numbers) {
+      startSmsPolling(n.activation_id, n.phone_number)
+      setAutoReleaseTimer(n.activation_id, n.expires_at)
+    }
+  } catch (e) {
+    console.error('恢复活跃会话失败:', e)
+  }
+}
+
 app.whenReady().then(() => {
   // 初始化数据库
   initDatabase()
   createWindow()
+  // 恢复已有活跃号码的轮询与释放定时器
+  restoreActiveSessions()
 })
 
 app.on('window-all-closed', () => {
@@ -306,9 +374,55 @@ ipcMain.handle('get-balance', async () => {
 })
 
 /**
+ * 获取/设置 API 日志开关
+ */
+ipcMain.handle('get-log-config', async () => {
+  try {
+    return { success: true, enabled: getLogEnabled() }
+  } catch (error) {
+    return { success: false, error: String(error) }
+  }
+})
+
+ipcMain.handle('set-log-enabled', async (_evt, enabled: boolean) => {
+  try {
+    setLogEnabled(!!enabled)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: String(error) }
+  }
+})
+
+/**
+ * 获取 API 日志
+ */
+ipcMain.handle('get-api-logs', async (_evt, filters: { action?: string; start?: number; end?: number; limit?: number; offset?: number }) => {
+  try {
+    const rows = getApiLogs(filters || {})
+    return { success: true, data: rows }
+  } catch (error) {
+    console.error('获取 API 日志错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+/**
+ * 列出 API 动作
+ */
+ipcMain.handle('list-api-actions', async () => {
+  try {
+    const actions = listApiActions()
+    return { success: true, data: actions }
+  } catch (error) {
+    console.error('列出 API 动作错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+/**
  * 请求号码
  */
-ipcMain.handle('request-number', async (_, service: string, country: string) => {
+ipcMain.handle('request-number', async (_, service: string, country: string, options?: { operators?: string[]; maxPrice?: number; ref?: string }) => {
   try {
     if (!smsService) {
       const config = getApiConfig()
@@ -324,8 +438,18 @@ ipcMain.handle('request-number', async (_, service: string, country: string) => 
     // 获取服务代码
     const serviceCode = SERVICE_CODES[service] || service
     
-    // 请求号码
-    const result = await smsService.getNumber(serviceCode, countryCode)
+    // v2 支持多个运营商优先顺序，组合为 CSV（可来自前端 options）
+    const fallbackOps = ['tmobile', 'at_t']
+    const opList = Array.isArray(options?.operators) && options!.operators!.length > 0 ? options!.operators! : fallbackOps
+    const operatorCsv = opList.map(op => OPERATOR_CODES[op] || op).filter(Boolean).join(',')
+
+    // 使用 API v2 获取号码（透传 maxPrice/ref）
+    const result = await smsService.getNumberV2(
+      serviceCode,
+      countryCode,
+      operatorCsv,
+      { maxPrice: options?.maxPrice, ref: options?.ref }
+    )
     
     // 保存到数据库
     const now = Date.now()
@@ -336,6 +460,7 @@ ipcMain.handle('request-number', async (_, service: string, country: string) => 
       phone_number: result.phoneNumber,
       service,
       country,
+      operator: (result as any).operator || (operatorCsv ? operatorCsv.split(',')[0] : undefined),
       status: 'active',
       created_at: now,
       expires_at: expiresAt
@@ -364,6 +489,54 @@ ipcMain.handle('request-number', async (_, service: string, country: string) => 
 })
 
 /**
+ * 列出服务、国家、运营商（从服务层取）
+ */
+ipcMain.handle('list-services', async () => {
+  try {
+    if (!smsService) {
+      const config = getApiConfig()
+      if (!config?.api_key) throw new Error('未配置 API Key')
+      smsService = new SmsActivateService(config.api_key)
+    }
+    const data = await smsService.getServicesList()
+    return { success: true, data }
+  } catch (error) {
+    console.error('获取服务列表错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+ipcMain.handle('list-countries', async () => {
+  try {
+    if (!smsService) {
+      const config = getApiConfig()
+      if (!config?.api_key) throw new Error('未配置 API Key')
+      smsService = new SmsActivateService(config.api_key)
+    }
+    const data = await smsService.getCountries()
+    return { success: true, data }
+  } catch (error) {
+    console.error('获取国家列表错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+ipcMain.handle('list-operators', async (_evt, country: string) => {
+  try {
+    if (!smsService) {
+      const config = getApiConfig()
+      if (!config?.api_key) throw new Error('未配置 API Key')
+      smsService = new SmsActivateService(config.api_key)
+    }
+    const data = await smsService.getOperators(country)
+    return { success: true, data }
+  } catch (error) {
+    console.error('获取运营商列表错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+/**
  * 手动释放号码
  */
 ipcMain.handle('release-number', async (_, activationId: string) => {
@@ -371,8 +544,20 @@ ipcMain.handle('release-number', async (_, activationId: string) => {
     if (!smsService) {
       throw new Error('SMS 服务未初始化')
     }
-    
-    await smsService.cancelActivation(activationId)
+    // 先请求取消，依据返回值判断；再进行短暂校验
+    const resp = await smsService.cancelActivation(activationId)
+    const ok = typeof resp === 'string' && /^ACCESS_/i.test(resp)
+    if (!ok) {
+      throw new Error('取消失败：' + String(resp))
+    }
+    // 校验（不阻塞释放，最多重试 3 次）
+    for (let i = 0; i < 3; i++) {
+      try {
+        const verify = await smsService.getStatus(activationId)
+        if (verify.status === 'cancelled') break
+      } catch {}
+      await new Promise(r => setTimeout(r, 500))
+    }
     updatePhoneNumberStatus(activationId, 'released', Date.now())
     
     // 停止轮询

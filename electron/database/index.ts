@@ -57,6 +57,35 @@ export function initDatabase(): Database.Database {
     )
   `)
   
+  // 若缺少日志开关列，进行表结构升级
+  try {
+    const info = db.prepare("PRAGMA table_info(api_config)").all() as Array<{ name: string }>
+    const hasLogEnabled = info.some(col => col.name === 'log_enabled')
+    if (!hasLogEnabled) {
+      db.exec(`ALTER TABLE api_config ADD COLUMN log_enabled INTEGER DEFAULT 0`)
+    }
+  } catch (e) {
+    // 忽略升级失败以避免影响启动
+    // console.warn('api_config 升级失败:', e)
+  }
+  
+  // 创建 API 日志表（写入主库）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      url TEXT,
+      params TEXT,
+      response TEXT,
+      success INTEGER NOT NULL,
+      service TEXT,
+      country TEXT,
+      operator TEXT,
+      activation_id TEXT
+    )
+  `)
+  
   return db
 }
 
@@ -117,6 +146,42 @@ export interface ApiConfig {
   api_key: string
   balance?: number
   last_updated?: number
+  log_enabled?: boolean
+}
+
+/**
+ * API 日志记录接口
+ */
+export interface ApiLogRecord {
+  timestamp: number
+  action: string
+  url?: string
+  params?: any
+  response?: string
+  success: boolean
+  service?: string
+  country?: string
+  operator?: string
+  activation_id?: string
+}
+
+// 现日志直接写入主库，无需单独日志数据库
+
+/**
+ * API 日志表行类型
+ */
+export interface ApiLogRow {
+  id: number
+  timestamp: number
+  action: string
+  url?: string
+  params?: string
+  response?: string
+  success: number
+  service?: string
+  country?: string
+  operator?: string
+  activation_id?: string
 }
 
 /**
@@ -216,16 +281,19 @@ export function saveApiConfig(config: ApiConfig): void {
   if (existing) {
     const stmt = db.prepare(`
       UPDATE api_config 
-      SET api_key = ?, balance = ?, last_updated = ?
+      SET api_key = ?, balance = ?, last_updated = ?, log_enabled = COALESCE(?, log_enabled)
       WHERE id = ?
     `)
-    stmt.run(config.api_key, config.balance || null, Date.now(), existing.id)
+    stmt.run(config.api_key, config.balance || null, Date.now(),
+      typeof config.log_enabled === 'boolean' ? (config.log_enabled ? 1 : 0) : null,
+      existing.id
+    )
   } else {
     const stmt = db.prepare(`
-      INSERT INTO api_config (api_key, balance, last_updated)
-      VALUES (?, ?, ?)
+      INSERT INTO api_config (api_key, balance, last_updated, log_enabled)
+      VALUES (?, ?, ?, ?)
     `)
-    stmt.run(config.api_key, config.balance || null, Date.now())
+    stmt.run(config.api_key, config.balance || null, Date.now(), config.log_enabled ? 1 : 0)
   }
 }
 
@@ -235,5 +303,89 @@ export function saveApiConfig(config: ApiConfig): void {
 export function getApiConfig(): ApiConfig | undefined {
   const db = getDatabase()
   const stmt = db.prepare('SELECT * FROM api_config LIMIT 1')
-  return stmt.get() as ApiConfig | undefined
+  const row = stmt.get() as (ApiConfig & { log_enabled?: number }) | undefined
+  if (!row) return undefined
+  return { ...row, log_enabled: row.log_enabled ? true : false }
+}
+
+/**
+ * 设置日志开关
+ */
+export function setLogEnabled(enabled: boolean): void {
+  const db = getDatabase()
+  const existing = db.prepare('SELECT id FROM api_config LIMIT 1').get() as ApiConfig | undefined
+  if (existing) {
+    db.prepare('UPDATE api_config SET log_enabled = ? WHERE id = ?').run(enabled ? 1 : 0, (existing as any).id)
+  } else {
+    // 若还没有配置则先写入一条默认配置（无 api_key 占位不可行），此处仅设置列值不创建新行
+    // 因为 api_key 为 NOT NULL，故跳过；待保存 API Key 时会写入 log_enabled
+  }
+}
+
+/**
+ * 获取日志开关
+ */
+export function getLogEnabled(): boolean {
+  const config = getApiConfig()
+  return !!config?.log_enabled
+}
+
+/**
+ * 保存 API 日志
+ */
+export function saveApiLog(record: ApiLogRecord): void {
+  const db = getDatabase()
+  const stmt = db.prepare(`
+    INSERT INTO api_logs (timestamp, action, url, params, response, success, service, country, operator, activation_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  stmt.run(
+    record.timestamp,
+    record.action,
+    record.url || null,
+    record.params ? JSON.stringify(record.params) : null,
+    record.response || null,
+    record.success ? 1 : 0,
+    record.service || null,
+    record.country || null,
+    record.operator || null,
+    record.activation_id || null
+  )
+}
+
+/**
+ * 查询 API 日志（支持 action 与时间范围过滤）
+ */
+export function getApiLogs(filters: { action?: string; start?: number; end?: number; limit?: number; offset?: number }): ApiLogRow[] {
+  const db = getDatabase()
+  const where: string[] = []
+  const params: any[] = []
+  if (filters.action && filters.action !== 'all') {
+    where.push('action = ?')
+    params.push(filters.action)
+  }
+  if (typeof filters.start === 'number') {
+    where.push('timestamp >= ?')
+    params.push(filters.start)
+  }
+  if (typeof filters.end === 'number') {
+    where.push('timestamp <= ?')
+    params.push(filters.end)
+  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
+  const limit = typeof filters.limit === 'number' ? Math.max(1, filters.limit) : 200
+  const offset = typeof filters.offset === 'number' ? Math.max(0, filters.offset) : 0
+  const sql = `SELECT * FROM api_logs ${whereSql} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+  const stmt = db.prepare(sql)
+  return stmt.all(...params, limit, offset) as ApiLogRow[]
+}
+
+/**
+ * 列出所有出现过的 action（用于前端下拉筛选）
+ */
+export function listApiActions(): string[] {
+  const db = getDatabase()
+  const stmt = db.prepare('SELECT DISTINCT action FROM api_logs ORDER BY action ASC')
+  const rows = stmt.all() as Array<{ action: string }>
+  return rows.map(r => r.action)
 }
