@@ -1,9 +1,9 @@
 // @see https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.sms.tool",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "短信工具",
   "directories": {
     "output": "release/${version}"
   },
@@ -15,7 +15,7 @@
     "target": [
       "dmg"
     ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+    "artifactName": "sms-tool-mac-${version}-installer.${ext}"
   },
   "win": {
     "target": [
@@ -26,18 +26,21 @@
         ]
       }
     ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    "artifactName": "sms-tool-windows-${version}-setup.${ext}",
+    "executableName": "SmsTool"
   },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+    "deleteAppDataOnUninstall": false,
+    "shortcutName": "短信工具",
+    "include": "build/installer.nsh"
   },
   "linux": {
     "target": [
       "AppImage"
     ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
+    "artifactName": "sms-tool-linux-${version}.${ext}"
   }
 }

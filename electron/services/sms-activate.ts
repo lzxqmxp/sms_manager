@@ -206,10 +206,17 @@ export class SmsActivateService {
     try {
       const response = await this.client.get(url)
       this.logApi('getOperators', url, { country }, { status: response.status, statusText: response.statusText, headers: response.headers, data: response.data }, true)
-      // 预期返回数组或对象；统一转成字符串数组
-      const data = response.data
-      if (Array.isArray(data)) return data.map(String)
-      if (data && typeof data === 'object') return Object.keys(data)
+      // 按照当前接口结构解析：{ status: 'success', countryOperators: { '187': [...] } }
+      const data = response.data as any
+      if (data && typeof data === 'object') {
+        const co = data.countryOperators
+        if (co && typeof co === 'object') {
+          const arr = co[String(country)]
+          if (Array.isArray(arr)) return arr.map((v: any) => String(v))
+        }
+      }
+      // 兼容极简返回为数组的场景
+      if (Array.isArray(response.data)) return (response.data as any[]).map(v => String(v))
       return []
     } catch (error) {
       // 不一定每个端点都支持 getOperators，失败时返回空数组
@@ -291,34 +298,50 @@ export class SmsActivateService {
     try {
       const response = await this.client.get(url)
       const raw = response.data
-      
-      // JSON 响应优先
-      if (raw && typeof raw === 'object') {
-        const data: any = raw
-        const activationId = data.activationId || data.activation_id || data.id || data.activation
-        const phoneNumber = data.phoneNumber || data.phone_number || data.number || data.phone
-        if (activationId && phoneNumber) {
-          const result = { activationId: String(activationId), phoneNumber: String(phoneNumber), operator: data.operator, price: data.price ?? data.cost }
-          this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, true, { service, country, operator: data.operator, activation_id: result.activationId })
-          return result
+      // 兼容端点在无号时返回字符串，如："NO_NUMBERS"
+      if (typeof raw === 'string') {
+        const text = raw.trim()
+        // 无可用号码的明确信号，直接抛出同名错误，便于上层精确识别
+        if (text === 'NO_NUMBERS' || text.startsWith('NO_NUMBERS')) {
+          this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, false, { service, country })
+          const err: any = new Error('NO_NUMBERS')
+          err.code = 'NO_NUMBERS'
+          throw err
         }
-        // 未能解析出必要字段则视为失败
+        // 其他字符串错误统一透传，避免误判为格式错误
         this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, false, { service, country })
-        throw new Error('getNumberV2 响应不包含必要字段')
+        throw new Error(text || 'getNumberV2 非预期字符串响应')
       }
-
-      // 兼容字符串响应（例如 ACCESS_NUMBER:...）
-      if (typeof raw === 'string' && raw.startsWith('ACCESS_NUMBER:')) {
-        const parts = raw.split(':')
-        const result = { activationId: parts[1], phoneNumber: parts[2] }
-        this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, true, { service, country, activation_id: result.activationId })
-        return result
+      // 严格使用标准 JSON 字段
+      if (!raw || typeof raw !== 'object') {
+        const err = 'getNumberV2 响应格式错误（非 JSON 对象）'
+        this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, false, { service, country })
+        throw new Error(err)
       }
-
-      // 其他字符串内容按错误处理
-      const err = `getNumberV2 失败: ${String(raw)}`
-      this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, false, { service, country })
-      throw new Error(err)
+      const data: any = raw
+      const activationId = data.activationId
+      const phoneNumber = data.phoneNumber
+      if (!activationId || !phoneNumber) {
+        this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, false, { service, country })
+        throw new Error('getNumberV2 响应不包含必要字段 activationId/phoneNumber')
+      }
+      const result = {
+        activationId: String(activationId),
+        phoneNumber: String(phoneNumber),
+        operator: data.activationOperator,
+        price: data.activationCost,
+        // 透传关键字段，供调用方持久化与渲染
+        activationCost: data.activationCost,
+        currency: data.currency,
+        countryCode: data.countryCode,
+        countryPhoneCode: data.countryPhoneCode,
+        canGetAnotherSms: data.canGetAnotherSms,
+        activationTime: data.activationTime,
+        activationEndTime: data.activationEndTime,
+        activationOperator: data.activationOperator,
+      } as any
+      this.logApi('getNumberV2', url, params, { status: response.status, statusText: response.statusText, headers: response.headers, data: raw }, true, { service, country, operator: data.activationOperator, activation_id: result.activationId })
+      return result
     } catch (error) {
       console.error('请求号码(v2)错误:', error)
       try {
@@ -483,14 +506,11 @@ export const COUNTRY_CODES: Record<string, string> = {
 
 /**
  * 运营商代码映射（包含常见别名）
- * - 一些兼容端点将 AT&T 表示为 `att`，因此将 `at_t` 归一至 `att`
  */
 export const OPERATOR_CODES: Record<string, string> = {
   // 标准与别名
   'any': 'any',
   'tmobile': 'tmobile',
-  'att': 'att',
-  'at_t': 'att',
   // 常见其他运营商（可按需扩展）
   'verizon': 'verizon',
   'sprint': 'sprint',

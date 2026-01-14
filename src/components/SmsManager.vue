@@ -17,6 +17,7 @@
           </label>
           <span class="log-label">API 日志</span>
         </div>
+        <button class="cache-btn" @click="clearCache">🧹 清空缓存</button>
       </div>
     </div>
 
@@ -40,14 +41,34 @@
           <h2>🎯 请求号码</h2>
           <div class="form-group">
             <label>服务:</label>
-            <select v-model="selectedService" class="select-field">
-              <option v-for="s in services" :key="s.code" :value="s.code">{{ s.name || s.code }}</option>
-            </select>
+            <!-- 合一型搜索下拉（类似 select2） -->
+            <div class="search-select" ref="serviceDropdownRef">
+              <input
+                v-model="serviceSearch"
+                class="input-field"
+                type="text"
+                placeholder="搜索并选择服务（如 tinder）"
+                @focus="serviceOpen = true"
+                @input="serviceOpen = true"
+                @keydown.enter.prevent="onServiceEnter"
+              />
+              <div v-if="serviceOpen" class="dropdown">
+                <div
+                  v-for="s in filteredServices"
+                  :key="s.code"
+                  class="dropdown-item"
+                  @mousedown.prevent="onServiceSelect(s)"
+                >
+                  {{ s.code }} {{ s.name || s.code }}
+                </div>
+                <div v-if="filteredServices.length === 0" class="dropdown-empty">无匹配项</div>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label>国家:</label>
             <select v-model="selectedCountry" class="select-field" @change="onCountryChange">
-              <option v-for="c in countries" :key="c.code" :value="c.code">{{ c.name }}</option>
+              <option v-for="c in countries" :key="c.code" :value="c.code">{{ c.code }} {{ c.name }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -55,7 +76,7 @@
             <div class="operator-list">
               <label v-for="op in operators" :key="op" class="op-item">
                 <input type="checkbox" :value="op" v-model="selectedOperators" />
-                <span>{{ formatOperator(op) }}</span>
+                <span>{{ op }} {{ formatOperator(op) }}</span>
               </label>
             </div>
           </div>
@@ -88,8 +109,9 @@
               <div class="number-info">
                 <span class="phone-number">📞 {{ formatPhoneNumber(number.phone_number) }}</span>
                 <span class="service-badge">{{ getServiceName(number.service) }}</span>
-                <span class="country-badge">{{ number.country }}</span>
+                <span class="country-badge">{{ getCountryLabel(number.country) }}</span>
                 <span class="operator-badge" v-if="number.operator">{{ formatOperator(number.operator || '') }}</span>
+                <span class="cost-badge" v-if="typeof number.cost === 'number'">💲 {{ Number(number.cost).toFixed(2) }}</span>
               </div>
               <div class="number-actions">
                 <button @click="requestResendSms(number.activation_id)" class="btn-secondary btn-small" :disabled="loading" title="请求重新发送短信">📨 重发</button>
@@ -138,7 +160,7 @@
 
 <script setup lang="ts">
 // 仅在渲染进程中使用的 Vue 组合式 API
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 // ---------------- 类型声明 ----------------
 // 短信消息
@@ -156,6 +178,7 @@ interface ActiveNumber {
   country: string
   operator?: string
   status: string
+  cost?: number
   created_at: number
   expires_at: number
 }
@@ -170,21 +193,93 @@ const hasApiKey = ref(false)
 const apiKeyInput = ref('')
 
 const services = ref<Array<{ code: string; name: string }>>([])
+// 服务搜索关键字，用于过滤服务下拉选项
+const serviceSearch = ref('')
 const countries = ref<Array<{ code: string; name: string }>>([])
+// 运营商改为对象数组，兼容 { code, name }
 const operators = ref<string[]>([])
 
 const selectedService = ref('')
 const selectedCountry = ref('')
+// 实际用于请求号码的国家代码（以 getOperators 返回为准）
+const countryForRequest = ref('')
 const selectedOperators = ref<string[]>([])
 const maxPrice = ref<number | null>(null)
 const refCode = ref('')
 
 const activeNumbers = ref<ActiveNumber[]>([])
 const smsMessages = ref<Map<string, SmsMessage[]>>(new Map())
+// 计算属性：根据搜索关键字过滤服务列表（按 code 或 name 匹配）
+const filteredServices = computed(() => {
+  const kw = serviceSearch.value.trim().toLowerCase()
+  if (!kw) return services.value
+  return services.value.filter(s => {
+    const code = String(s.code || '').toLowerCase()
+    const name = String(s.name || '').toLowerCase()
+    return code.includes(kw) || name.includes(kw)
+  })
+})
+
+// 服务搜索下拉开关与容器引用
+const serviceOpen = ref(false)
+const serviceDropdownRef = ref<HTMLElement | null>(null)
+
+// 选择服务：写入选中值并同步搜索框显示文本
+function onServiceSelect(s: { code: string; name?: string }) {
+  selectedService.value = s.code
+  serviceSearch.value = `${s.code} ${s.name || s.code}`
+  serviceOpen.value = false
+}
+
+// 按回车选择第一个匹配项
+function onServiceEnter() {
+  const first = filteredServices.value[0]
+  if (first) onServiceSelect(first)
+}
+
+// 点击空白处关闭下拉
+function onDocClick(e: MouseEvent) {
+  const el = serviceDropdownRef.value
+  if (!el) return
+  const target = e.target as Node
+  if (!el.contains(target)) serviceOpen.value = false
+}
+
+// 同步：当选中服务变化时，更新输入框显示文本
+watch(selectedService, (val) => {
+  const item = services.value.find(s => s.code === val)
+  if (item) serviceSearch.value = `${item.code} ${item.name || item.code}`
+})
 
 const notification = ref<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
 let notificationTimeout: ReturnType<typeof setTimeout> | null = null
 let countdownInterval: ReturnType<typeof setInterval> | null = null
+
+// 本地缓存配置（10 分钟过期）
+const CACHE_KEY_SERVICES = 'smsmgr_services_cache'
+const CACHE_KEY_COUNTRIES = 'smsmgr_countries_cache'
+const CACHE_PREFIX_OPERATORS = 'smsmgr_ops_'
+const CACHE_TTL = 10 * 60 * 1000
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const obj = JSON.parse(raw) as { expiresAt: number; data: T }
+    if (!obj || typeof obj !== 'object') return null
+    if (typeof obj.expiresAt !== 'number' || Date.now() > obj.expiresAt) return null
+    return obj.data
+  } catch {
+    return null
+  }
+}
+
+function writeCache<T>(key: string, data: T) {
+  try {
+    const payload = { expiresAt: Date.now() + CACHE_TTL, data }
+    localStorage.setItem(key, JSON.stringify(payload))
+  } catch {}
+}
 
 // ---------------- 工具函数 ----------------
 function showNotification(message: string, type: 'success' | 'error' | 'info' = 'info') {
@@ -193,6 +288,20 @@ function showNotification(message: string, type: 'success' | 'error' | 'info' = 
   notificationTimeout = setTimeout(() => {
     notification.value = null
   }, 2500)
+}
+
+function clearCache() {
+  try {
+    localStorage.removeItem(CACHE_KEY_SERVICES)
+    localStorage.removeItem(CACHE_KEY_COUNTRIES)
+    const toDelete: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(CACHE_PREFIX_OPERATORS)) toDelete.push(k)
+    }
+    toDelete.forEach(k => localStorage.removeItem(k))
+  } catch {}
+  showNotification('缓存已清空', 'info')
 }
 
 function getSmsForNumber(activationId: string): SmsMessage[] {
@@ -207,15 +316,15 @@ function formatPhoneNumber(phone: string): string {
   return '+' + phone
 }
 
-function getServiceName(service: string): string {
-  const names: Record<string, string> = {
-    tinder: 'Tinder',
-    telegram: 'Telegram',
-    whatsapp: 'WhatsApp',
-    google: 'Google',
-    facebook: 'Facebook',
-  }
-  return names[service] || service
+// 根据 getServicesList 返回的数据映射服务名称
+function getServiceName(serviceCode: string): string {
+  // 优先按 code 精确匹配
+  const item = services.value.find(s => String(s.code) === String(serviceCode))
+  if (item && item.name) return item.name
+  // 兼容大小写差异
+  const lower = String(serviceCode || '').toLowerCase()
+  const item2 = services.value.find(s => String(s.code || '').toLowerCase() === lower)
+  return (item2 && item2.name) || serviceCode
 }
 
 function formatOperator(op: string): string {
@@ -260,6 +369,12 @@ function formatTime(timestamp: number): string {
   const minutes = String(date.getMinutes()).padStart(2, '0')
   const seconds = String(date.getSeconds()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+// 根据国家代码（键）获取中文名称（若无则回退英文/俄文/原值）
+function getCountryLabel(code: string): string {
+  const item = countries.value.find(c => c.code === String(code))
+  return item?.name || String(code)
 }
 
 // ---------------- IPC 调用 ----------------
@@ -311,15 +426,21 @@ async function requestNumber() {
   requestingNumber.value = true
   loading.value = true
   try {
+    // 将 Vue 的响应式数据转换为可结构化克隆的纯数据，避免 Electron IPC 报错
+    const plainOperators = Array.isArray(selectedOperators.value)
+      ? Array.from((selectedOperators.value as unknown as string[]))
+      : []
+    const payload = {
+      operators: plainOperators,
+      maxPrice: typeof maxPrice.value === 'number' ? maxPrice.value : undefined,
+      ref: refCode.value ? String(refCode.value) : undefined,
+    }
     const result = await window.ipcRenderer.invoke(
       'request-number',
-      selectedService.value,
-      selectedCountry.value,
-      {
-        operators: selectedOperators.value,
-        maxPrice: maxPrice.value ?? undefined,
-        ref: refCode.value || undefined,
-      },
+      String(selectedService.value || ''),
+      // 国家的取值优先使用 getOperators 阶段确定的代码
+      String(countryForRequest.value || selectedCountry.value || ''),
+      payload,
     )
     if (result.success) {
       showNotification('号码获取成功！', 'success')
@@ -329,6 +450,7 @@ async function requestNumber() {
       showNotification('获取号码失败: ' + result.error, 'error')
     }
   } catch (error) {
+    console.error('获取号码失败:', error)
     showNotification('获取号码失败: ' + String(error), 'error')
   } finally {
     requestingNumber.value = false
@@ -338,14 +460,62 @@ async function requestNumber() {
 
 async function onCountryChange() {
   try {
-    const res = await window.ipcRenderer.invoke('list-operators', selectedCountry.value)
-    if (res?.success) {
-      operators.value = Array.isArray(res.data) ? res.data : []
+    const cacheKey = `${CACHE_PREFIX_OPERATORS}${String(selectedCountry.value)}`
+    const cachedOps = readCache<string[]>(cacheKey)
+    if (cachedOps && Array.isArray(cachedOps)) {
+      operators.value = cachedOps
       selectedOperators.value = []
+      countryForRequest.value = String(selectedCountry.value)
+      return
+    }
+
+    const res = await window.ipcRenderer.invoke('list-operators', selectedCountry.value)
+    // 严格模式：假定返回为 Axios 响应结构 { status, data }
+    const body: any = res?.data
+    let list: string[] = []
+    // 默认将请求用国家设为当前选择
+    let effectiveCountry = String(selectedCountry.value)
+    if (Array.isArray(body)) {
+      // 主进程已按国家返回纯数组
+      list = body.map(v => String(v))
+      // 若是数组，说明服务端已按传入的国家筛选，此时直接沿用
+      countryForRequest.value = effectiveCountry
+    } else {
+      // 从对象结构中读取指定国家（187）的数组
+      const co: any = body?.countryOperators
+      const key = String(selectedCountry.value)
+      let arr = co?.[key]
+      // 如果当前 key 未命中，但返回仅含一个国家键，则使用该唯一键
+      if (!Array.isArray(arr) && co && typeof co === 'object') {
+        const keys = Object.keys(co)
+        if (keys.length === 1) {
+          effectiveCountry = String(keys[0])
+          arr = co[effectiveCountry]
+        }
+      }
+      list = Array.isArray(arr) ? arr.map((v: any) => String(v)) : []
+      // 以最终确定的国家代码作为后续请求的国家
+      countryForRequest.value = effectiveCountry
+    }
+
+    operators.value = list
+    selectedOperators.value = []
+
+    if (list.length) {
+      const finalKey = `${CACHE_PREFIX_OPERATORS}${countryForRequest.value || effectiveCountry}`
+      writeCache(finalKey, list)
+    }
+
+    // 国家切换后重置服务选择：优先 tinder/oi，否则首项
+    if (services.value.length) {
+      const tinderItem = services.value.find(it => String(it.name || '').toLowerCase() === 'tinder' || String(it.code || '').toLowerCase() === 'oi')
+      const pick = tinderItem || services.value[0]
+      selectedService.value = pick.code
     }
   } catch (e) {
     operators.value = []
     selectedOperators.value = []
+    countryForRequest.value = String(selectedCountry.value)
   }
 }
 
@@ -440,43 +610,75 @@ onMounted(async () => {
     if (cfg?.success) logEnabled.value = !!cfg.enabled
   } catch {}
 
-  // 加载服务与国家
+  // 加载服务与国家（带缓存）
   try {
+    const cachedServices = readCache<Array<{ code: string; name: string }>>(CACHE_KEY_SERVICES)
+    const cachedCountries = readCache<Array<{ code: string; name: string }>>(CACHE_KEY_COUNTRIES)
+    if (cachedServices) services.value = cachedServices
+    if (cachedCountries) countries.value = cachedCountries
+
+    const needServices = services.value.length === 0
+    const needCountries = countries.value.length === 0
+
     const [sv, ct] = await Promise.all([
-      window.ipcRenderer.invoke('list-services'),
-      window.ipcRenderer.invoke('list-countries'),
+      needServices ? window.ipcRenderer.invoke('list-services') : Promise.resolve(null),
+      needCountries ? window.ipcRenderer.invoke('list-countries') : Promise.resolve(null),
     ])
-    if (sv?.success) {
+
+    if (needServices && sv?.success) {
       const raw = sv.data
-      const arr: Array<{ code: string; name: string }> = []
+      let arr: Array<{ code: string; name: string }> = []
       if (raw && typeof raw === 'object') {
-        for (const k in raw) {
-          const item = raw[k]
-          arr.push({ code: k, name: item?.name || k })
+        if (Array.isArray((raw as any).services)) {
+          arr = (raw as any).services
+            .map((it: any) => ({ code: String(it.code || it.value || ''), name: String(it.name || '') }))
+            .filter((it: any) => !!it.code)
+        } else {
+          for (const k in raw as any) {
+            const item = (raw as any)[k]
+            arr.push({ code: k, name: item?.name || k })
+          }
         }
       }
       services.value = arr
-      if (!selectedService.value && arr.length) selectedService.value = arr[0].code
+      if (arr.length) writeCache(CACHE_KEY_SERVICES, arr)
     }
-    if (ct?.success) {
+
+    if (needCountries && ct?.success) {
       const raw = ct.data
       const arr: Array<{ code: string; name: string }> = []
       if (raw && typeof raw === 'object') {
-        for (const k in raw) {
-          const name = typeof raw[k] === 'string' ? raw[k] : (raw[k]?.name || k)
-          arr.push({ code: k, name })
+        for (const k in raw as any) {
+          const item = (raw as any)[k]
+          const name = (item && (item.chn || item.eng || item.rus)) || String(k)
+          arr.push({ code: String(k), name: String(name) })
         }
       }
       countries.value = arr
-      if (!selectedCountry.value && arr.length) {
-        selectedCountry.value = arr[0].code
-        await onCountryChange()
-      }
+      if (arr.length) writeCache(CACHE_KEY_COUNTRIES, arr)
+    }
+
+    if (!selectedService.value && services.value.length) {
+      const tinderItem = services.value.find(it => String(it.name || '').toLowerCase() === 'tinder' || String(it.code || '').toLowerCase() === 'oi')
+      const displayItem = tinderItem || services.value[0]
+      selectedService.value = displayItem.code
+      serviceSearch.value = `${displayItem.code} ${displayItem.name || displayItem.code}`
+    }
+
+    if (!selectedCountry.value && countries.value.length) {
+      const byCode = countries.value.find(it => String(it.code) === '187')
+      const byName = countries.value.find(it => /美国|\busa\b|united states/i.test(String(it.name || '')))
+      const pick = byCode || byName || countries.value[0]
+      selectedCountry.value = pick.code
+      await onCountryChange()
     }
   } catch {}
 
   // 设置事件监听
   setupSmsListener()
+
+  // 注册全局点击监听以关闭服务下拉
+  document.addEventListener('click', onDocClick)
 
   // 倒计时刷新
   countdownInterval = setInterval(() => {
@@ -487,6 +689,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (countdownInterval) clearInterval(countdownInterval)
   if (notificationTimeout) clearTimeout(notificationTimeout)
+  document.removeEventListener('click', onDocClick)
 })
 </script>
 
@@ -533,6 +736,21 @@ onUnmounted(() => {
 .log-label {
   color: #000000;
   font-weight: 600;
+}
+
+.cache-btn {
+  padding: 10px 14px;
+  border: 1px solid #f0c88f;
+  border-radius: 10px;
+  background: #fff7e6;
+  color: #c26b00;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cache-btn:hover {
+  background: #ffe3c2;
 }
 
 /* 简易开关样式 */
@@ -681,6 +899,35 @@ onUnmounted(() => {
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid #e0e0e0;
+}
+
+/* 合一型搜索下拉样式 */
+.search-select {
+  position: relative;
+}
+.search-select .dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 2px solid #e0e0e0;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 50;
+}
+.search-select .dropdown-item {
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.search-select .dropdown-item:hover {
+  background: #f7f7f7;
+}
+.search-select .dropdown-empty {
+  padding: 10px 12px;
+  color: #999;
 }
 
 /* 输入框和选择框 */
@@ -867,6 +1114,15 @@ button:disabled {
   border-radius: 15px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.cost-badge {
+  background: #fff0f0;
+  color: #c0392b;
+  padding: 4px 12px;
+  border-radius: 15px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .number-actions {

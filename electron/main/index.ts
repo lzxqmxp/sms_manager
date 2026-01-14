@@ -1,8 +1,9 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu, Tray } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs'
 import { 
   initDatabase, 
   closeDatabase, 
@@ -23,6 +24,7 @@ import { SmsActivateService, COUNTRY_CODES, SERVICE_CODES, OPERATOR_CODES } from
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const pkg = require('../../package.json')
 
 // The built directory structure
 //
@@ -56,12 +58,14 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let win: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
 async function createWindow() {
   win = new BrowserWindow({
-    title: 'SMS Manager - 短信接码管理器',
+    title: `短信工具 v${pkg.version}`,
     width: 1200,
     height: 800,
     minWidth: 900,
@@ -77,6 +81,9 @@ async function createWindow() {
       // contextIsolation: false,
     },
   })
+
+  // 隐藏/移除默认菜单栏
+  win.removeMenu()
 
   if (VITE_DEV_SERVER_URL) { // #298
     win.loadURL(VITE_DEV_SERVER_URL)
@@ -97,6 +104,62 @@ async function createWindow() {
     return { action: 'deny' }
   })
   // win.webContents.on('will-navigate', (event, url) => { }) #344
+
+  // 关闭主窗口时最小化到托盘
+  win.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault()
+      win?.hide()
+    }
+  })
+}
+
+function setupTray() {
+  if (tray) return
+  const basePublic = process.env.VITE_PUBLIC || path.join(process.env.APP_ROOT, 'public')
+  const packagedIcon = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'public', 'favicon.ico')
+  const iconCandidates = [
+    path.join(basePublic, 'favicon.ico'),
+    packagedIcon,
+  ]
+  const iconPath = iconCandidates.find(p => p && fs.existsSync(p)) || iconCandidates[0]
+
+  try {
+    tray = new Tray(iconPath)
+  } catch (e) {
+    console.error('创建托盘失败，图标路径:', iconPath, e)
+    return
+  }
+  tray.setToolTip(`短信工具 v${pkg.version}`)
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      },
+    },
+  ])
+  tray.setContextMenu(contextMenu)
+
+  tray.on('click', () => {
+    if (!win) {
+      createWindow()
+      return
+    }
+    win.show()
+    win.focus()
+  })
+
+  tray.on('double-click', () => {
+    if (!win) {
+      createWindow()
+      return
+    }
+    win.show()
+    win.focus()
+  })
 }
 
 // SMS-Activate 服务实例
@@ -107,6 +170,13 @@ const pollingTimers: Map<string, NodeJS.Timeout> = new Map()
 
 // 自动释放定时器
 const releaseTimers: Map<string, NodeJS.Timeout> = new Map()
+// 到期完成定时器（超过释放时间 2 分钟后标记完成）
+const completionTimers: Map<string, NodeJS.Timeout> = new Map()
+
+// 记录已为某个激活ID触发过一次延迟重发请求，避免重复触发
+const resendRequested: Set<string> = new Set()
+// 记录已为某个激活ID保存过第一条短信，避免重复保存相同短信
+const firstSmsSaved: Set<string> = new Set()
 
 /**
  * 开始轮询短信
@@ -130,34 +200,52 @@ function startSmsPolling(activationId: string, phoneNumber: string) {
       const status = await smsService.getStatus(activationId)
       
       if (status.status === 'received' && status.message) {
-        // 收到短信，保存到数据库
-        saveSmsMessage({
-          activation_id: activationId,
-          phone_number: phoneNumber,
-          message: status.message,
-          received_at: Date.now()
-        })
-        
-        // 通知渲染进程
-        win?.webContents.send('sms-received', {
-          activationId,
-          phoneNumber,
-          message: status.message,
-          receivedAt: Date.now()
-        })
-        
-        // 完成激活
-        await smsService.finishActivation(activationId)
-        updatePhoneNumberStatus(activationId, 'completed')
-        
-        // 停止轮询
-        clearInterval(timer)
-        pollingTimers.delete(activationId)
+        // 收到短信，保存到数据库（仅首次保存，避免重复保存同一条短信）
+        if (!firstSmsSaved.has(activationId)) {
+          saveSmsMessage({
+            activation_id: activationId,
+            phone_number: phoneNumber,
+            message: status.message,
+            received_at: Date.now()
+          })
+          firstSmsSaved.add(activationId)
+
+          // 收到短信后立即取消自动释放定时器，避免误释放
+          const releaseTimer = releaseTimers.get(activationId)
+          if (releaseTimer) {
+            clearTimeout(releaseTimer)
+            releaseTimers.delete(activationId)
+          }
+          // 收到短信后仍保留完成定时器以便到期标记完成
+
+          // 通知渲染进程（仅首次）
+          win?.webContents.send('sms-received', {
+            activationId,
+            phoneNumber,
+            message: status.message,
+            receivedAt: Date.now()
+          })
+        }
+
+        // 不执行完成激活动作；改为延迟5秒触发一次 requestOneMoreSms，且仅触发一次
+        if (!resendRequested.has(activationId)) {
+          resendRequested.add(activationId)
+          setTimeout(async () => {
+            try {
+              await smsService.requestOneMoreSms(activationId)
+            } catch (e) {
+              console.error('延迟重发请求失败:', e)
+            }
+          }, 5000)
+        }
       } else if (status.status === 'cancelled') {
         // 已取消
         updatePhoneNumberStatus(activationId, 'cancelled', Date.now())
         clearInterval(timer)
         pollingTimers.delete(activationId)
+        // 清理标记
+        resendRequested.delete(activationId)
+        firstSmsSaved.delete(activationId)
       }
     } catch (error) {
       console.error('轮询短信错误:', error)
@@ -176,6 +264,12 @@ function setAutoReleaseTimer(activationId: string, expiresAt: number) {
   // 在到期前 2 分钟释放号码
   const releaseTime = expiresAt - 2 * 60 * 1000
   const delay = releaseTime - Date.now()
+
+  // 若已超过释放时间 2 分钟（即到期时间），直接标记为完成
+  if (Date.now() >= expiresAt) {
+    updatePhoneNumberStatus(activationId, 'completed', Date.now())
+    return
+  }
   
   if (delay > 0) {
     const timer = setTimeout(async () => {
@@ -230,6 +324,13 @@ function setAutoReleaseTimer(activationId: string, expiresAt: number) {
               clearInterval(pollingTimer)
               pollingTimers.delete(activationId)
             }
+
+            // 释放后不再需要完成定时器
+            const completionTimer = completionTimers.get(activationId)
+            if (completionTimer) {
+              clearTimeout(completionTimer)
+              completionTimers.delete(activationId)
+            }
           } else {
             console.warn('自动释放失败：远端未确认取消且返回非 ACCESS_* 响应', resp)
           }
@@ -245,6 +346,18 @@ function setAutoReleaseTimer(activationId: string, expiresAt: number) {
     }, delay)
     
     releaseTimers.set(activationId, timer)
+  } else {
+    // 释放时间已过但未到到期时间，则仅安排完成定时器
+  }
+
+  // 安排到期完成定时器（释放时间后 2 分钟，即 expiresAt）
+  const completeDelay = expiresAt - Date.now()
+  if (completeDelay > 0 && !completionTimers.has(activationId)) {
+    const completeTimer = setTimeout(() => {
+      updatePhoneNumberStatus(activationId, 'completed', Date.now())
+      completionTimers.delete(activationId)
+    }, completeDelay)
+    completionTimers.set(activationId, completeTimer)
   }
 }
 
@@ -267,6 +380,7 @@ app.whenReady().then(() => {
   // 初始化数据库
   initDatabase()
   createWindow()
+  setupTray()
   // 恢复已有活跃号码的轮询与释放定时器
   restoreActiveSessions()
 })
@@ -277,6 +391,7 @@ app.on('window-all-closed', () => {
   // 清理所有定时器
   pollingTimers.forEach(timer => clearInterval(timer))
   releaseTimers.forEach(timer => clearTimeout(timer))
+  completionTimers.forEach(timer => clearTimeout(timer))
   
   win = null
   if (process.platform !== 'darwin') app.quit()
@@ -432,8 +547,9 @@ ipcMain.handle('request-number', async (_, service: string, country: string, opt
       smsService = new SmsActivateService(config.api_key)
     }
     
-    // 获取国家代码
-    const countryCode = COUNTRY_CODES[country] || '12'
+    // 获取国家代码：若前端已传入纯数字代码（如 '187'），则直接透传；否则按映射表转换
+    const countryTrim = String(country || '').trim()
+    const countryCode = /^\d+$/.test(countryTrim) ? countryTrim : (COUNTRY_CODES[countryTrim] || '12')
     
     // 获取服务代码
     const serviceCode = SERVICE_CODES[service] || service
@@ -444,25 +560,29 @@ ipcMain.handle('request-number', async (_, service: string, country: string, opt
     const operatorCsv = opList.map(op => OPERATOR_CODES[op] || op).filter(Boolean).join(',')
 
     // 使用 API v2 获取号码（透传 maxPrice/ref）
-    const result = await smsService.getNumberV2(
+    const result: any = await smsService.getNumberV2(
       serviceCode,
       countryCode,
       operatorCsv,
       { maxPrice: options?.maxPrice, ref: options?.ref }
     )
     
-    // 保存到数据库
-    const now = Date.now()
-    const expiresAt = now + 20 * 60 * 1000 // 20 分钟后到期
+    // 时间按本地语义：创建时间=当前时刻；到期时间=创建时间+20分钟
+    const createdAt = Date.now()
+    const expiresAt = createdAt + 20 * 60 * 1000
     
     const record: PhoneNumberRecord = {
       activation_id: result.activationId,
       phone_number: result.phoneNumber,
       service,
-      country,
-      operator: (result as any).operator || (operatorCsv ? operatorCsv.split(',')[0] : undefined),
+      // 以接口返回为准（countryCode 为数字字符串）
+      country: (result.countryCode ? String(result.countryCode) : country),
+      // 以接口返回为准
+      operator: (result.activationOperator || (result as any).operator || (operatorCsv ? operatorCsv.split(',')[0] : undefined)),
       status: 'active',
-      created_at: now,
+      // 以接口返回成本为准
+      cost: typeof result.activationCost === 'number' ? result.activationCost : (result.price as number | undefined),
+      created_at: createdAt,
       expires_at: expiresAt
     }
     
@@ -572,6 +692,13 @@ ipcMain.handle('release-number', async (_, activationId: string) => {
     if (releaseTimer) {
       clearTimeout(releaseTimer)
       releaseTimers.delete(activationId)
+    }
+
+    // 取消完成定时器
+    const completionTimer = completionTimers.get(activationId)
+    if (completionTimer) {
+      clearTimeout(completionTimer)
+      completionTimers.delete(activationId)
     }
     
     return { success: true }
