@@ -156,6 +156,27 @@ export class SmsActivateService {
   }
 
   /**
+   * 查询号码价格（对应 getPrices 接口）
+   */
+  async getPrices(service: string, country: string): Promise<any> {
+    const url = this.buildUrl('getPrices', { service, country })
+    try {
+      const response = await this.client.get(url)
+      this.logApi('getPrices', url, { service, country }, { status: response.status, statusText: response.statusText, headers: response.headers, data: response.data }, true, { service, country })
+      return response.data
+    } catch (error) {
+      console.error('获取价格错误:', error)
+      try {
+        const err: any = error
+        const resp = err?.response
+        const payload = resp ? { status: resp.status, statusText: resp.statusText, headers: resp.headers, data: resp.data } : { error: String(err?.message || error) }
+        this.logApi('getPrices', url, { service, country }, payload, false, { service, country })
+      } catch {}
+      throw error
+    }
+  }
+
+  /**
    * 获取服务列表（API 文档：getServicesList）
    */
   async getServicesList(): Promise<any> {
