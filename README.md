@@ -4,7 +4,7 @@
 
 > **API Endpoint Note**: This application uses [hero-sms.com](https://hero-sms.com) API endpoint, which is compatible with SMS-Activate protocol
 
-## 功能特性
+## Features
 
 ✨ **Core Features**
 - 🔑 SMS-Activate Protocol Compatible API Integration
@@ -23,6 +23,20 @@
 - 📋 Multiple SMS reception support
 - 🔄 SMS resend request support
 - 💾 Local data persistence
+
+## System Architecture
+
+This application uses Electron's three-process architecture:
+
+- **Main Process**: Handles window management, business logic orchestration, database operations, and scheduled tasks
+- **Renderer Process**: Vue 3-based user interface that communicates with the main process via IPC
+- **Preload Script**: Securely exposes IPC interfaces using contextBridge
+
+**Core Mechanisms**:
+- 📡 Automatic SMS status polling every 5 seconds
+- ⏰ Auto-release numbers 2 minutes before expiry
+- 💾 SQLite3 local data persistence
+- 🔄 Real-time event push (SMS arrival, number release)
 
 ## Quick Start
 

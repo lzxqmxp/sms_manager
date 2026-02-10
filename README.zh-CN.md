@@ -24,12 +24,26 @@
 - 🔄 支持请求重发短信
 - 💾 本地数据持久化
 
+## 系统架构
+
+本应用采用 Electron 三进程架构：
+
+- **主进程 (Main Process)**：负责窗口管理、业务逻辑编排、数据库操作和定时任务
+- **渲染进程 (Renderer Process)**：基于 Vue 3 的用户界面，通过 IPC 与主进程通信
+- **预加载脚本 (Preload Script)**：使用 contextBridge 安全地暴露 IPC 接口
+
+**核心机制**：
+- 📡 每 5 秒自动轮询短信状态
+- ⏰ 号码到期前 2 分钟自动释放
+- 💾 SQLite3 本地数据持久化
+- 🔄 实时事件推送（短信到达、号码释放）
+
 ## 快速开始
 
 ### 环境要求
 
 - Node.js 16+
-- npm 或 yarn
+- npm 或 pnpm（推荐使用 pnpm）
 
 ### 安装步骤
 
@@ -40,13 +54,19 @@ git clone https://github.com/lzxqmxp/sms_manager.git
 # 进入项目目录
 cd sms_manager
 
-# 安装依赖
+# 安装依赖（推荐使用 pnpm）
+pnpm install
+# 或使用 npm
 npm install
 
 # 开发模式运行
+pnpm dev
+# 或
 npm run dev
 
 # 构建应用
+pnpm build
+# 或
 npm run build
 ```
 
