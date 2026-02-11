@@ -1,6 +1,8 @@
 # SMS Manager - 短信接码管理器
 
-📱 基于 Electron + Vue 3 + Vite 开发的 SMS-Activate API 短信接码管理应用
+📱 基于 Electron + Vue 3 + Vite 开发的短信接码管理桌面应用
+
+> **API 端点说明**：本应用使用 [hero-sms.com](https://hero-sms.com) API 端点，该端点与 SMS-Activate 协议兼容
 
 ## 功能特性
 
@@ -22,12 +24,26 @@
 - 🔄 支持请求重发短信
 - 💾 本地数据持久化
 
+## 系统架构
+
+本应用采用 Electron 三进程架构：
+
+- **主进程 (Main Process)**：负责窗口管理、业务逻辑编排、数据库操作和定时任务
+- **渲染进程 (Renderer Process)**：基于 Vue 3 的用户界面，通过 IPC 与主进程通信
+- **预加载脚本 (Preload Script)**：使用 contextBridge 安全地暴露 IPC 接口
+
+**核心机制**：
+- 📡 每 5 秒自动轮询短信状态
+- ⏰ 号码到期前 2 分钟自动释放
+- 💾 SQLite3 本地数据持久化
+- 🔄 实时事件推送（短信到达、号码释放）
+
 ## 快速开始
 
 ### 环境要求
 
 - Node.js 16+
-- npm 或 yarn
+- npm 或 pnpm（推荐使用 pnpm）
 
 ### 安装步骤
 
@@ -38,13 +54,19 @@ git clone https://github.com/lzxqmxp/sms_manager.git
 # 进入项目目录
 cd sms_manager
 
-# 安装依赖
+# 安装依赖（推荐使用 pnpm）
+pnpm install
+# 或使用 npm
 npm install
 
 # 开发模式运行
+pnpm dev
+# 或
 npm run dev
 
 # 构建应用
+pnpm build
+# 或
 npm run build
 ```
 
@@ -52,11 +74,13 @@ npm run build
 
 ### 1. 配置 API Key
 
-首次使用需要配置您的 SMS-Activate API Key：
+首次使用需要配置您的 API Key：
 
-1. 访问 [SMS-Activate](https://sms-activate.org/) 注册账户
+1. 访问 [hero-sms.com](https://hero-sms.com) 或其他兼容 SMS-Activate 协议的服务商网站注册账户
 2. 在个人中心获取 API Key
 3. 在应用中输入 API Key 并点击"保存并连接"
+
+> **提示**：本应用支持所有兼容 SMS-Activate 协议的服务商
 
 ### 2. 请求号码
 
@@ -139,7 +163,11 @@ sms_manager/
 
 ## API 说明
 
-### SMS-Activate API 参考
+### API 端点
+
+应用默认使用 `https://hero-sms.com/stubs/handler_api.php` 作为 API 端点，该端点兼容 SMS-Activate 协议。
+
+### 支持的 API 操作
 
 - **getBalance**: 获取账户余额
 - **getNumber**: 请求虚拟号码
@@ -147,7 +175,9 @@ sms_manager/
 - **setStatus**: 设置激活状态
 - **cancelActivation**: 取消激活（释放号码）
 
-详细 API 文档: [SMS-Activate API Docs](https://sms-activate.org/en/api2)
+### API 协议参考
+
+本应用实现了 SMS-Activate 兼容协议，详细协议规范可参考：[SMS-Activate API Docs](https://sms-activate.org/en/api2)
 
 ## 界面预览
 
@@ -172,7 +202,7 @@ sms_manager/
 ## 常见问题
 
 **Q: 如何获取 API Key？**  
-A: 访问 SMS-Activate 官网注册账户后，在个人中心可以找到 API Key。
+A: 访问 [hero-sms.com](https://hero-sms.com) 或其他兼容服务商的网站注册账户后，在个人中心可以找到 API Key。
 
 **Q: 为什么没有收到短信？**  
 A: 可能的原因：
@@ -234,6 +264,6 @@ SMS Manager 功能实现：2024
 ## 致谢
 
 - [electron-vite-vue](https://github.com/electron-vite/electron-vite-vue) - 优秀的 Electron + Vue + Vite 模板
-- [SMS-Activate](https://sms-activate.org/) - 提供短信接码服务
+- [hero-sms.com](https://hero-sms.com) - 提供短信接码服务
 - [Vue 3](https://vuejs.org/) - 渐进式 JavaScript 框架
 - [Electron](https://www.electronjs.org/) - 跨平台桌面应用框架

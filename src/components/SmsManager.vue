@@ -90,6 +90,17 @@
               <input type="text" v-model="refCode" class="input-field" placeholder="推荐码/来源标识" />
             </div>
           </div>
+          <div class="form-group price-row">
+            <label>预计费用:</label>
+            <div class="price-box">
+              <span v-if="priceLoading">查询中...</span>
+              <span v-else-if="estimatedPrice !== null">约 {{ estimatedPrice.toFixed(3) }}</span>
+              <span v-else>尚未获取</span>
+              <button class="btn-secondary btn-small" @click="fetchEstimatedPrice" :disabled="priceLoading || loading">🔍 查询价格</button>
+            </div>
+            <div class="price-hint" v-if="priceError">{{ priceError }}</div>
+            <div class="price-hint" v-else>数据来源: getPrices</div>
+          </div>
           <button @click="requestNumber" class="btn-primary btn-large" :disabled="loading || requestingNumber">
             {{ requestingNumber ? '⏳ 请求中...' : '🚀 请求号码' }}
           </button>
@@ -206,6 +217,9 @@ const countryForRequest = ref('')
 const selectedOperators = ref<string[]>([])
 const maxPrice = ref<number | null>(null)
 const refCode = ref('')
+const estimatedPrice = ref<number | null>(null)
+const priceLoading = ref(false)
+const priceError = ref('')
 
 const activeNumbers = ref<ActiveNumber[]>([])
 const smsMessages = ref<Map<string, SmsMessage[]>>(new Map())
@@ -249,6 +263,14 @@ function onDocClick(e: MouseEvent) {
 watch(selectedService, (val) => {
   const item = services.value.find(s => s.code === val)
   if (item) serviceSearch.value = `${item.code} ${item.name || item.code}`
+})
+
+watch([selectedService, countryForRequest], () => {
+  if (hasApiKey.value) fetchEstimatedPrice()
+})
+
+watch(hasApiKey, (val) => {
+  if (val) fetchEstimatedPrice()
 })
 
 const notification = ref<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
@@ -419,6 +441,38 @@ async function applyLogEnabled() {
     showNotification(`API 日志已${logEnabled.value ? '开启' : '关闭'}`, 'info')
   } catch (error) {
     showNotification('设置日志开关失败: ' + String(error), 'error')
+  }
+}
+
+async function fetchEstimatedPrice() {
+  if (!hasApiKey.value) return
+  const svc = String(selectedService.value || '').trim()
+  const ctry = String(countryForRequest.value || selectedCountry.value || '').trim()
+  if (!svc || !ctry) {
+    estimatedPrice.value = null
+    return
+  }
+
+  priceLoading.value = true
+  priceError.value = ''
+  try {
+    const res = await window.ipcRenderer.invoke('get-prices', { service: svc, country: ctry })
+    if (res?.success) {
+      if (res.price === null || res.price === undefined) {
+        estimatedPrice.value = null
+        priceError.value = '未返回费用数据'
+      } else {
+        estimatedPrice.value = Number(res.price)
+      }
+    } else {
+      estimatedPrice.value = null
+      priceError.value = res?.error ? String(res.error) : '查询失败'
+    }
+  } catch (error) {
+    estimatedPrice.value = null
+    priceError.value = String(error)
+  } finally {
+    priceLoading.value = false
   }
 }
 
@@ -751,6 +805,30 @@ onUnmounted(() => {
 
 .cache-btn:hover {
   background: #ffe3c2;
+}
+
+.price-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.price-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f5f7ff;
+  border: 1px dashed #9aa7ff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #2f3367;
+  width: fit-content;
+}
+
+.price-hint {
+  color: #4b5563;
+  font-size: 12px;
+  margin: 0;
 }
 
 /* 简易开关样式 */

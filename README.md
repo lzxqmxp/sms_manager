@@ -1,195 +1,263 @@
-# SMS Manager - 短信接码管理器
+# SMS Manager - SMS Verification Manager
 
-📱 基于 Electron + Vue 3 + Vite 开发的 SMS-Activate API 短信接码管理应用
+📱 Desktop application for SMS verification code management, built with Electron + Vue 3 + Vite
 
-## 功能特性
+> **API Endpoint Note**: This application uses [hero-sms.com](https://hero-sms.com) API endpoint, which is compatible with SMS-Activate protocol
 
-✨ **核心功能**
-- 🔑 SMS-Activate API 集成
-- 📞 一键请求虚拟手机号码
-- 💬 实时接收短信验证码
-- ⏱️ 自动释放未使用号码（到期前2分钟）
-- 💰 实时查看账户余额
-- 📊 SQLite3 数据库存储
-- 🌐 支持多服务商（Tinder、Telegram、WhatsApp、Google、Facebook）
-- 🇺🇸 支持多国家/地区（美国、俄罗斯、乌克兰、菲律宾、印尼）
+## Features
 
-✨ **用户体验**
-- 🎨 现代化 UI 设计
-- 📱 实时倒计时显示
-- 🔔 即时通知提醒
-- 📋 支持多条短信接收
-- 🔄 支持请求重发短信
-- 💾 本地数据持久化
+✨ **Core Features**
+- 🔑 SMS-Activate Protocol Compatible API Integration
+- 📞 One-click virtual phone number request
+- 💬 Real-time SMS verification code reception
+- ⏱️ Auto-release unused numbers (2 minutes before expiry)
+- 💰 Real-time account balance display
+- 📊 SQLite3 database storage
+- 🌐 Multi-service support (Tinder, Telegram, WhatsApp, Google, Facebook)
+- 🇺🇸 Multi-country/region support (USA, Russia, Ukraine, Philippines, Indonesia)
 
-## 快速开始
+✨ **User Experience**
+- 🎨 Modern UI design
+- 📱 Real-time countdown display
+- 🔔 Instant notifications
+- 📋 Multiple SMS reception support
+- 🔄 SMS resend request support
+- 💾 Local data persistence
 
-### 环境要求
+## System Architecture
+
+This application uses Electron's three-process architecture:
+
+- **Main Process**: Handles window management, business logic orchestration, database operations, and scheduled tasks
+- **Renderer Process**: Vue 3-based user interface that communicates with the main process via IPC
+- **Preload Script**: Securely exposes IPC interfaces using contextBridge
+
+**Core Mechanisms**:
+- 📡 Automatic SMS status polling every 5 seconds
+- ⏰ Auto-release numbers 2 minutes before expiry
+- 💾 SQLite3 local data persistence
+- 🔄 Real-time event push (SMS arrival, number release)
+
+## Quick Start
+
+### Requirements
 
 - Node.js 16+
-- npm 或 yarn
+- npm or pnpm (pnpm recommended)
 
-### 安装步骤
+### Installation
 
 ```bash
-# 克隆项目
+# Clone the repository
 git clone https://github.com/lzxqmxp/sms_manager.git
 
-# 进入项目目录
+# Navigate to project directory
 cd sms_manager
 
-# 安装依赖
+# Install dependencies (using pnpm recommended)
+pnpm install
+# or use npm
 npm install
 
-# 开发模式运行
+# Run in development mode
+pnpm dev
+# or
 npm run dev
 
-# 构建应用
+# Build the application
+pnpm build
+# or
 npm run build
 ```
 
-## 使用说明
+## Usage Guide
 
-### 1. 配置 API Key
+### 1. Configure API Key
 
-首次使用需要配置您的 SMS-Activate API Key：
+First-time setup requires API Key configuration:
 
-1. 访问 [SMS-Activate](https://sms-activate.org/) 注册账户
-2. 在个人中心获取 API Key
-3. 在应用中输入 API Key 并点击"保存并连接"
+1. Visit [hero-sms.com](https://hero-sms.com) or other SMS-Activate protocol compatible service provider to register
+2. Get your API Key from the user dashboard
+3. Enter the API Key in the application and click "Save and Connect"
 
-### 2. 请求号码
+> **Tip**: This application supports all service providers compatible with SMS-Activate protocol
 
-1. 选择服务商（如 Tinder）
-2. 选择国家/地区（如美国）
-3. 点击"请求号码"按钮
-4. 系统将自动获取可用号码并开始监听短信
+### 2. Request Phone Number
 
-### 3. 接收短信
+1. Select service provider (e.g., Tinder)
+2. Select country/region (e.g., USA)
+3. Click "Request Number" button
+4. System will automatically fetch available number and start listening for SMS
 
-- 号码请求成功后，应用会自动轮询检查短信
-- 收到短信后会立即显示在界面上
-- 支持接收多条短信（二次验证码等）
-- 可以手动点击"重发"按钮请求重新发送短信
+### 3. Receive SMS
 
-### 4. 号码管理
+- After successful number request, the app automatically polls for SMS
+- SMS will be displayed immediately upon receipt
+- Supports multiple SMS reception (for secondary verification codes, etc.)
+- Manual "Resend" button available to request SMS resend
 
-- 每个号码有效期 20 分钟
-- 系统会在到期前 2 分钟自动释放未使用的号码
-- 可以随时手动点击"释放"按钮释放号码
-- 收到短信后号码状态自动变为"完成"
+### 4. Number Management
 
-### 5. 余额查询
+- Each number has a 20-minute validity period
+- System auto-releases unused numbers 2 minutes before expiry
+- Manual "Release" button available to release number anytime
+- Number status automatically changes to "Completed" upon SMS receipt
 
-- 应用顶部实时显示账户余额
-- 点击"刷新"按钮手动更新余额
-- 每次操作后会自动刷新余额
+### 5. Balance Query
 
-## 项目结构
+- Account balance displayed in real-time at the top of the app
+- "Refresh" button available for manual balance update
+- Balance automatically refreshed after each operation
+
+## Project Structure
 
 ```
 sms_manager/
 ├── electron/
 │   ├── main/
-│   │   └── index.ts          # 主进程入口
+│   │   └── index.ts          # Main process entry
 │   ├── preload/
-│   │   └── index.ts          # 预加载脚本
+│   │   └── index.ts          # Preload script
 │   ├── database/
-│   │   └── index.ts          # 数据库模块（SQLite3）
+│   │   └── index.ts          # Database module (SQLite3)
 │   └── services/
-│       └── sms-activate.ts   # SMS-Activate API 服务
+│       └── sms-activate.ts   # SMS-Activate compatible API service
 ├── src/
 │   ├── components/
-│   │   └── SmsManager.vue    # 主界面组件
+│   │   └── SmsManager.vue    # Main UI component
 │   ├── types/
-│   │   └── ipc.d.ts          # IPC 类型定义
-│   ├── App.vue               # 根组件
-│   └── main.ts               # 渲染进程入口
+│   │   └── ipc.d.ts          # IPC type definitions
+│   ├── App.vue               # Root component
+│   └── main.ts               # Renderer process entry
 ├── package.json
 ├── vite.config.ts
 └── README.md
 ```
 
-## 技术栈
+## Tech Stack
 
-- **前端框架**: Vue 3 (Composition API)
-- **桌面框架**: Electron 29
-- **构建工具**: Vite 5
-- **数据库**: better-sqlite3
-- **HTTP 客户端**: axios
-- **类型检查**: TypeScript 5
+- **Frontend Framework**: Vue 3 (Composition API)
+- **Desktop Framework**: Electron 29
+- **Build Tool**: Vite 5
+- **Database**: better-sqlite3
+- **HTTP Client**: axios
+- **Type Checking**: TypeScript 5
 
-## 数据存储
+## Data Storage
 
-应用使用 SQLite3 数据库存储以下数据：
+The application uses SQLite3 database to store:
 
-- **phone_numbers**: 号码记录表
-  - 激活ID、手机号、服务商、国家、状态、时间等
+- **phone_numbers**: Phone number records
+  - Activation ID, phone number, service, country, status, timestamps, etc.
   
-- **sms_messages**: 短信记录表
-  - 激活ID、手机号、短信内容、接收时间等
+- **sms_messages**: SMS message records
+  - Activation ID, phone number, message content, receive time, etc.
   
-- **api_config**: API 配置表
-  - API Key、余额、最后更新时间等
+- **api_config**: API configuration
+  - API Key, balance, last update time, etc.
 
-数据库文件位置：
+Database file locations:
 - Windows: `%APPDATA%/electron-vue-vite/sms_manager.db`
 - macOS: `~/Library/Application Support/electron-vue-vite/sms_manager.db`
 - Linux: `~/.config/electron-vue-vite/sms_manager.db`
 
-## API 说明
+## API Documentation
 
-### SMS-Activate API 参考
+### API Endpoint
 
-- **getBalance**: 获取账户余额
-- **getNumber**: 请求虚拟号码
-- **getStatus**: 查询短信状态
-- **setStatus**: 设置激活状态
-- **cancelActivation**: 取消激活（释放号码）
+The application uses `https://hero-sms.com/stubs/handler_api.php` as the default API endpoint, which is compatible with SMS-Activate protocol.
 
-详细 API 文档: [SMS-Activate API Docs](https://sms-activate.org/en/api2)
+### Supported API Operations
 
-## 注意事项
+- **getBalance**: Get account balance
+- **getNumber**: Request virtual phone number
+- **getStatus**: Query SMS status
+- **setStatus**: Set activation status
+- **cancelActivation**: Cancel activation (release number)
 
-⚠️ **重要提示**：
+### API Protocol Reference
 
-1. 请妥善保管您的 API Key，不要分享给他人
-2. 每个号码都有时间限制，请及时使用
-3. 号码会在到期前 2 分钟自动释放以避免浪费
-4. 建议定期检查账户余额
-5. 某些服务商和国家的号码价格可能不同
+This application implements SMS-Activate compatible protocol. For detailed protocol specifications, refer to: [SMS-Activate API Docs](https://sms-activate.org/en/api2)
 
-## 常见问题
+## Important Notes
 
-**Q: 如何获取 API Key？**  
-A: 访问 SMS-Activate 官网注册账户后，在个人中心可以找到 API Key。
+⚠️ **Important Reminders**:
 
-**Q: 为什么没有收到短信？**  
-A: 可能的原因：
-- 网络连接问题
-- 服务商延迟发送
-- 号码已被使用
-- 可以尝试点击"重发"按钮
+1. Keep your API Key secure and do not share it with others
+2. Each number has a time limit, please use promptly
+3. Numbers are auto-released 2 minutes before expiry to avoid waste
+4. Regularly check your account balance
+5. Prices may vary by service provider and country
 
-**Q: 号码会自动释放吗？**  
-A: 是的，系统会在号码到期前 2 分钟自动释放未收到短信的号码。
+## Frequently Asked Questions
 
-**Q: 数据存储在哪里？**  
-A: 数据存储在本地 SQLite 数据库中，位于系统用户数据目录。
+**Q: How to get an API Key?**  
+A: Visit [hero-sms.com](https://hero-sms.com) or other compatible service provider's website to register an account, then find the API Key in the user dashboard.
 
-**Q: 支持哪些服务商？**  
-A: 目前支持 Tinder、Telegram、WhatsApp、Google、Facebook 等主流服务。
+**Q: Why didn't I receive the SMS?**  
+A: Possible reasons:
+- Network connection issues
+- Service provider sending delay
+- Number already in use
+- Try clicking the "Resend" button
 
-## 许可证
+**Q: Will numbers be automatically released?**  
+A: Yes, the system automatically releases numbers that haven't received SMS 2 minutes before expiry.
+
+**Q: Where is the data stored?**  
+A: Data is stored in a local SQLite database in the system's user data directory.
+
+**Q: Which service providers are supported?**  
+A: Currently supports mainstream services like Tinder, Telegram, WhatsApp, Google, Facebook, etc.
+
+**Q: Can I request multiple numbers simultaneously?**  
+A: Yes, the application supports managing multiple active numbers at the same time.
+
+**Q: Are SMS messages saved?**  
+A: Yes, all received SMS messages are saved in the local database.
+
+## Development Guide
+
+### Debug Mode
+
+```bash
+pnpm dev
+# or
+npm run dev
+```
+
+Development mode automatically opens DevTools for debugging.
+
+### Build Production Version
+
+```bash
+pnpm build
+# or
+npm run build
+```
+
+After building, the executable will be generated in the `release` directory.
+
+### Code Comments
+
+All code includes detailed Chinese comments for easy understanding and maintenance.
+
+## Contributing
+
+Issues and Pull Requests are welcome!
+
+## License
 
 MIT License
 
-## 作者
+## Author
 
-开发：基于 electron-vite-vue 模板  
-SMS Manager 功能实现：2024
+Development: Based on electron-vite-vue template  
+SMS Manager Implementation: 2024
 
-## 致谢
+## Acknowledgments
 
-- [electron-vite-vue](https://github.com/electron-vite/electron-vite-vue) - 优秀的 Electron + Vue + Vite 模板
-- [SMS-Activate](https://sms-activate.org/) - 提供短信接码服务
+- [electron-vite-vue](https://github.com/electron-vite/electron-vite-vue) - Excellent Electron + Vue + Vite template
+- [hero-sms.com](https://hero-sms.com) - SMS verification service provider
+- [Vue 3](https://vuejs.org/) - Progressive JavaScript framework
+- [Electron](https://www.electronjs.org/) - Cross-platform desktop application framework

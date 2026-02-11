@@ -1,33 +1,54 @@
-## 2022-10-03
+# 更新日志 / Changelog
 
-[v2.1.0](https://github.com/electron-vite/electron-vite-vue/pull/267)
+所有重要的项目变更都将记录在此文件中。
 
-- `vite-electron-plugin` is Fast, and WYSIWYG. 🌱
-- last-commit: db2e830 v2.1.0: use `vite-electron-plugin` instead `vite-plugin-electron`
+## [1.0.0] - 2024
 
-## 2022-06-04
+### 新增功能 (Added)
+- ✨ SMS-Activate 兼容协议 API 集成
+- 📞 一键请求虚拟手机号码功能
+- 💬 实时接收短信验证码
+- ⏱️ 自动释放未使用号码（到期前2分钟）
+- 💰 实时查看账户余额
+- 📊 SQLite3 数据库本地存储
+- 🌐 支持多服务商（Tinder、Telegram、WhatsApp、Google、Facebook）
+- 🇺🇸 支持多国家/地区（美国、俄罗斯、乌克兰、菲律宾、印尼）
+- 🎨 现代化 UI 设计
+- 📱 实时倒计时显示
+- 🔔 即时通知提醒
+- 📋 支持多条短信接收
+- 🔄 支持请求重发短信
+- 💾 本地数据持久化
 
-[v2.0.0](https://github.com/electron-vite/electron-vite-vue/pull/156)
+### 技术实现 (Technical)
+- Electron 三进程架构
+- Vue 3 Composition API
+- Vite 5 构建工具
+- TypeScript 类型检查
+- better-sqlite3 数据库
+- IPC 进程间通信
+- 自动轮询机制（每5秒）
+- 定时释放机制
 
-- 🖖 Based on the `vue-ts` template created by `npm create vite`, integrate `vite-plugin-electron`
-- ⚡️ More simplify, is in line with Vite project structure
-- last-commit: a15028a (HEAD -> main) feat: hoist `process.env`
+### 配置 (Configuration)
+- 使用 hero-sms.com API 端点
+- 兼容 SMS-Activate 协议
+- 跨平台支持（Windows、macOS、Linux）
 
-## 2022-01-30
+---
 
-[v1.0.0](https://github.com/electron-vite/electron-vite-vue/releases/tag/v1.0.0)
+## 模板历史 (Template History)
 
-- ⚡️ Main、Renderer、preload, all built with vite
+本项目基于 electron-vite-vue 模板构建。
 
-## 2022-01-27
-- Refactor the scripts part.
-- Remove `configs` directory.
+### 2022-10-03 - Template v2.1.0
+- 使用 `vite-electron-plugin` 替代 `vite-plugin-electron`
 
-## 2021-11-11
-- Refactor the project. Use vite.config.ts build `Main-process`, `Preload-script` and `Renderer-process` alternative rollup.
-- Scenic `Vue>=3.2.13`, `@vue/compiler-sfc` is no longer necessary.
-- If you prefer Rollup, Use rollup branch.
+### 2022-06-04 - Template v2.0.0
+- 基于 `vue-ts` 模板创建
+- 集成 `vite-plugin-electron`
+- 简化项目结构
 
-```bash
-Error: @vitejs/plugin-vue requires vue (>=3.2.13) or @vue/compiler-sfc to be present in the dependency tree.
-```
+### 2022-01-30 - Template v1.0.0
+- 主进程、渲染进程、预加载脚本全部使用 Vite 构建
+
