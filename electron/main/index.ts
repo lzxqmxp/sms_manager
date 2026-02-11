@@ -63,6 +63,53 @@ let isQuitting = false
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
+// 从 getPrices 返回体中提取价格（字段可能为 cost/price/activationCost，兼容不同结构）
+function extractPrice(data: any, serviceCode: string, countryCode: string): number | null {
+  const toNumber = (val: any): number | null => {
+    const num = Number(val)
+    return Number.isFinite(num) ? num : null
+  }
+
+  const pickCost = (node: any): number | null => {
+    if (!node || typeof node !== 'object') return null
+    const candidates = [node.cost, node.price, node.activationCost, node.activation_cost]
+    for (const val of candidates) {
+      const num = toNumber(val)
+      if (num !== null) return num
+    }
+    return null
+  }
+
+  if (!data || typeof data !== 'object') return null
+
+  const direct = pickCost(data?.[serviceCode]?.[countryCode])
+  if (direct !== null) return direct
+
+  const withOperator = data?.[serviceCode]?.[countryCode]
+  if (withOperator && typeof withOperator === 'object') {
+    for (const key of Object.keys(withOperator)) {
+      const val = pickCost((withOperator as any)[key])
+      if (val !== null) return val
+    }
+  }
+
+  const swapped = pickCost(data?.[countryCode]?.[serviceCode])
+  if (swapped !== null) return swapped
+
+  const flatKey = `${serviceCode}_${countryCode}`
+  const flat = pickCost(data?.[flatKey])
+  if (flat !== null) return flat
+
+  for (const key of Object.keys(data)) {
+    if (key.includes(serviceCode) && key.includes(countryCode)) {
+      const val = pickCost((data as any)[key])
+      if (val !== null) return val
+    }
+  }
+
+  return null
+}
+
 async function createWindow() {
   win = new BrowserWindow({
     title: `短信工具 v${pkg.version}`,
@@ -652,6 +699,34 @@ ipcMain.handle('list-operators', async (_evt, country: string) => {
     return { success: true, data }
   } catch (error) {
     console.error('获取运营商列表错误:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+/**
+ * 查询预计费用（调用 getPrices）
+ */
+ipcMain.handle('get-prices', async (_evt, payload: { service: string; country: string }) => {
+  try {
+    if (!smsService) {
+      const config = getApiConfig()
+      if (!config?.api_key) throw new Error('未配置 API Key')
+      smsService = new SmsActivateService(config.api_key)
+    }
+
+    const serviceInput = String(payload?.service || '').trim()
+    const countryInput = String(payload?.country || '').trim()
+    if (!serviceInput || !countryInput) throw new Error('缺少服务或国家参数')
+
+    const serviceCode = SERVICE_CODES[serviceInput] || serviceInput
+    const countryCode = /^\d+$/.test(countryInput) ? countryInput : (COUNTRY_CODES[countryInput] || countryInput)
+
+    const raw = await smsService.getPrices(serviceCode, countryCode)
+    const price = extractPrice(raw, serviceCode, countryCode)
+
+    return { success: true, price, raw }
+  } catch (error) {
+    console.error('获取价格错误:', error)
     return { success: false, error: String(error) }
   }
 })
