@@ -560,11 +560,14 @@ async function onCountryChange() {
       writeCache(finalKey, list)
     }
 
-    // 国家切换后重置服务选择：优先 tinder/oi，否则首项
+    // 国家切换后保留当前服务；仅当当前值为空或已不存在时才回退默认项
     if (services.value.length) {
-      const tinderItem = services.value.find(it => String(it.name || '').toLowerCase() === 'tinder' || String(it.code || '').toLowerCase() === 'oi')
-      const pick = tinderItem || services.value[0]
-      selectedService.value = pick.code
+      const currentExists = services.value.some(it => String(it.code) === String(selectedService.value))
+      if (!selectedService.value || !currentExists) {
+        const tinderItem = services.value.find(it => String(it.name || '').toLowerCase() === 'tinder' || String(it.code || '').toLowerCase() === 'oi')
+        const pick = tinderItem || services.value[0]
+        selectedService.value = pick.code
+      }
     }
   } catch (e) {
     operators.value = []

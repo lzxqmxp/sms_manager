@@ -41,6 +41,7 @@ process.env.APP_ROOT = path.join(__dirname, '../..')
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 export const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
+const IS_DEV = !!VITE_DEV_SERVER_URL || !!process.env.VSCODE_DEBUG
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
@@ -154,7 +155,7 @@ async function createWindow() {
 
   // 关闭主窗口时最小化到托盘
   win.on('close', (e) => {
-    if (!isQuitting) {
+    if (!isQuitting && !IS_DEV) {
       e.preventDefault()
       win?.hide()
     }
@@ -423,13 +424,17 @@ function restoreActiveSessions() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // 初始化数据库
-  initDatabase()
+  await initDatabase()
   createWindow()
-  setupTray()
+  if (!IS_DEV) {
+    setupTray()
+  }
   // 恢复已有活跃号码的轮询与释放定时器
   restoreActiveSessions()
+}).catch((error) => {
+  console.error('应用启动失败:', error)
 })
 
 app.on('window-all-closed', () => {
